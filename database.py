@@ -78,7 +78,7 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def set_chapter(self, total: int) -> bool:
+    async def set_total_chapters(self, total: int) -> bool:
         """
         Kapitelanzahl für aktuelles Buch setzen.
 

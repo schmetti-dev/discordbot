@@ -102,7 +102,7 @@ class Books(commands.Cog):
         """Setzt die Anzahl der Kapitel (nur für Admins)."""
         await interaction.response.defer(thinking=True)
 
-        ok = await self.bot.db.set_chapter(chapter)
+        ok = await self.bot.db.set_total_chapters(chapter)
         if not ok:
             await interaction.followup.send(
                 "❌ Noch kein Buch gesetzt. Zuerst `/buch-setzen` verwenden.",

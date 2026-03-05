@@ -55,19 +55,19 @@ async def test_set_book_overwrites_previous(db):
     assert book["isbn"] == "222"
 
 
-async def test_set_chapter(db):
+async def test_set_total_chapters(db):
     """Kapitelanzahl für aktuelles Buch setzen."""
     await db.set_book("111", "Test", None, None, None, None, 1)
-    ok = await db.set_chapter(24)
+    ok = await db.set_total_chapters(24)
 
     assert ok is True
     book = await db.get_book()
     assert book["total_chapters"] == 24
 
 
-async def test_set_chapter_without_book_returns_false(db):
+async def test_set_total_chapters_without_book_returns_false(db):
     """set_chapter ohne aktives Buch gibt False zurück."""
-    ok = await db.set_chapter(24)
+    ok = await db.set_total_chapters(24)
     assert ok is False
 
 
