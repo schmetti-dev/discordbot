@@ -1,0 +1,6 @@
+# Alle Produktions-Abhängigkeiten
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0   # async test functions mit 'await'

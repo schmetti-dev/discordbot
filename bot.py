@@ -71,8 +71,8 @@ class BuchclubBot(commands.Bot):
         log.info(f"✅ Bot bereit als {self.user} (ID: {self.user.id})")
         await self.change_presence(
             activity=discord.Activity(
-                type=discord.ActivityType.reading,
-                name="im Buchclub 📚",
+                type=discord.ActivityType.watching,
+                name="den Buchclub 📚",
             )
         )
 
