@@ -72,7 +72,7 @@ class BuchclubBot(commands.Bot):
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="den Buchclub 📚",
+                name="Die Buchketiere 📚",
             )
         )
 
