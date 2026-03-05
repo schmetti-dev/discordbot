@@ -6,6 +6,7 @@ Slash Commands für das Verwalten und Anzeigen des aktuellen Buchclub-Buches.
 Commands:
     /buch         — Aktuelles Buch mit Klappentext anzeigen
     /buch-setzen  — Neues Buch via ISBN setzen (Admin)
+    /set-chapter  — Kapitel setzen (Admin)
 """
 
 import os
@@ -89,6 +90,31 @@ class Books(commands.Cog):
         await interaction.followup.send(
             content="✅ **Neues Buchclub-Buch gesetzt!**",
             embed=embed,
+        )
+    
+    @app_commands.command(
+        name="set-chapter",
+        description="[Admin] Setzt die Anzahl der Kapitel."
+    )
+    @app_commands.describe(chapter="Anzahl der Kapitel")
+    @has_admin_role()
+    async def set_chapter(self, interaction: discord.Interaction, chapter: int) -> None:
+        """Setzt die Anzahl der Kapitel (nur für Admins)."""
+        await interaction.response.defer(thinking=True)
+
+        ok = await self.bot.db.set_chapter(chapter)
+        if not ok:
+            await interaction.followup.send(
+                "❌ Noch kein Buch gesetzt. Zuerst `/buch-setzen` verwenden.",
+                ephemeral=True,
+            )
+            return
+
+        log.info(f"Kapitel gesetzt: {chapter} von {interaction.user}")
+
+        book = await self.bot.db.get_book()
+        await interaction.followup.send(
+            content=f"✅ **{book['title']}** hat **{chapter} Kapitel**.",
         )
 
 

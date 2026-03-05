@@ -78,12 +78,18 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def set_total_chapters(self, total: int) -> None:
-        """Kapitelanzahl für aktuelles Buch setzen."""
-        await self._conn.execute(
+    async def set_chapter(self, total: int) -> bool:
+        """
+        Kapitelanzahl für aktuelles Buch setzen.
+
+        Returns:
+            True wenn erfolgreich gesetzt, False wenn kein Buch aktiv ist.
+        """
+        cursor = await self._conn.execute(
             "UPDATE current_book SET total_chapters = ? WHERE id = 1", (total,)
         )
         await self._conn.commit()
+        return cursor.rowcount > 0
 
     # ── Fortschritts-Operationen ──────────────────────────────────────────────
 
