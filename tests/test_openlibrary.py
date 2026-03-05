@@ -36,7 +36,9 @@ EDITION_RESPONSE = {
 }
 
 WORK_RESPONSE = {
-    "description": {"value": "Ein fesselnder Meeresthriller."}
+    "description": {"value": "Ein fesselnder Meeresthriller."},
+    # Autor sitzt im Work mit tieferem Nesting: authors[i]["author"]["key"]
+    "authors": [{"author": {"key": "/authors/OL456A"}}],
 }
 
 AUTHOR_RESPONSE = {
