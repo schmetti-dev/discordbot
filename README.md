@@ -1,4 +1,4 @@
-# 📚 Buchclub Discord Bot
+# 📚 Die Buchketiere — Discord Bot
 
 Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discordpy.readthedocs.io/).
 
@@ -14,9 +14,10 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 | Command | Beschreibung | Berechtigung |
 |---|---|---|
 | `/buch-setzen <isbn>` | Aktuelles Buch via ISBN setzen | Admin |
+| `/set-total-chapters <n>` | Kapitelanzahl manuell setzen | Admin |
 | `/buch` | Buchinfo + Klappentext anzeigen | Alle |
 | `/fortschritt` | Eigenen Lesefortschritt aktualisieren | Alle |
-| `/buchketiere` | Übersicht aller Mitglieder | Alle |
+| `/buchketiere` | Lesefortschritt aller Mitglieder | Alle |
 
 ## Setup
 
@@ -47,6 +48,13 @@ cp .env.example .env
 python bot.py
 ```
 
+### Tests ausführen
+
+```bash
+pip install -r requirements-dev.txt
+pytest -v
+```
+
 ## Projektstruktur
 
 ```
@@ -54,12 +62,16 @@ discordbot/
 ├── bot.py              # Einstiegspunkt & Bot-Initialisierung
 ├── database.py         # SQLite Schema und Datenbankzugriff
 ├── cogs/
-│   ├── books.py        # /buch und /buch-setzen Commands
-│   └── progress.py     # /fortschritt und /alle-fortschritte Commands
+│   ├── books.py        # /buch, /buch-setzen, /set-total-chapters
+│   └── progress.py     # /fortschritt, /buchketiere
 ├── services/
 │   └── openlibrary.py  # OpenLibrary API Client
+├── tests/
+│   ├── test_database.py    # Datenbank-Tests (in-memory SQLite)
+│   └── test_openlibrary.py # API-Tests (httpx Mock)
 ├── .env.example        # Vorlage für Umgebungsvariablen
-└── requirements.txt    # Python-Abhängigkeiten
+├── requirements.txt    # Produktions-Abhängigkeiten
+└── requirements-dev.txt # Test-Abhängigkeiten
 ```
 
 ## Technologie
@@ -68,3 +80,4 @@ discordbot/
 - **aiosqlite** — Asynchrones SQLite
 - **httpx** — Async HTTP Client (OpenLibrary API)
 - **python-dotenv** — .env Datei laden
+- **pytest + pytest-asyncio** — Async Tests
