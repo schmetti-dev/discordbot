@@ -93,12 +93,12 @@ class Books(commands.Cog):
         )
     
     @app_commands.command(
-        name="set-chapter",
+        name="set-total-chapters",
         description="[Admin] Setzt die Anzahl der Kapitel."
     )
     @app_commands.describe(chapter="Anzahl der Kapitel")
     @has_admin_role()
-    async def set_chapter(self, interaction: discord.Interaction, chapter: int) -> None:
+    async def set_total_chapters(self, interaction: discord.Interaction, chapter: int) -> None:
         """Setzt die Anzahl der Kapitel (nur für Admins)."""
         await interaction.response.defer(thinking=True)
 
@@ -137,6 +137,9 @@ def _build_book_embed(book: dict) -> discord.Embed:
 
     if book.get("total_pages"):
         embed.add_field(name="📄 Seiten", value=str(book["total_pages"]), inline=True)
+
+    if book.get("total_chapters"):
+        embed.add_field(name="Kapitel", value=str(book["total_chapters"]), inline=True)
 
     if book.get("isbn"):
         embed.add_field(name="ISBN", value=book["isbn"], inline=True)

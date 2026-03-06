@@ -16,7 +16,7 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 | `/buch-setzen <isbn>` | Aktuelles Buch via ISBN setzen | Admin |
 | `/buch` | Buchinfo + Klappentext anzeigen | Alle |
 | `/fortschritt` | Eigenen Lesefortschritt aktualisieren | Alle |
-| `/alle-fortschritte` | Übersicht aller Mitglieder | Alle |
+| `/buchketiere` | Übersicht aller Mitglieder | Alle |
 
 ## Setup
 

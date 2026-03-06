@@ -28,6 +28,7 @@ load_dotenv()
 # Intents — welche Discord-Events der Bot empfangen darf
 intents = discord.Intents.default()
 intents.message_content = True  # Für zukünftige Prefix-Erweiterungen
+intents.members = True
 
 
 class BuchclubBot(commands.Bot):

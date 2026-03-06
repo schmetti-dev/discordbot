@@ -125,10 +125,10 @@ class Progress(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(
-        name="alle-fortschritte",
+        name="buchketiere",
         description="Zeigt den Lesefortschritt aller Buchclub-Mitglieder."
     )
-    async def alle_fortschritte(self, interaction: discord.Interaction) -> None:
+    async def buchketiere(self, interaction: discord.Interaction) -> None:
         """Fortschrittsübersicht aller User anzeigen."""
         await interaction.response.defer()
 
@@ -157,7 +157,7 @@ class Progress(commands.Cog):
             progress_str = _format_progress(entry, book)
             embed.add_field(name=name, value=progress_str, inline=False)
 
-        embed.set_footer(text=f"{len(entries)} Mitglied(er) tracken ihren Fortschritt")
+        embed.set_footer(text=f"{len(entries)} Buchketier(e) tracken ihren Fortschritt")
         await interaction.followup.send(embed=embed)
 
 
