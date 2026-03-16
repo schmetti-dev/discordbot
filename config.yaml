@@ -1,0 +1,24 @@
+name: "Buchclub Discord Bot"
+description: "Discord Bot für den Buchclub — trackt Bücher und Lesefortschritt."
+version: "1.0.0"
+slug: buchclub_discord_bot
+init: false
+
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+
+options:
+  discord_token: ""
+  discord_guild_id: null
+  admin_role_name: "Buchclub-Admin"
+
+schema:
+  discord_token: str
+  discord_guild_id: str?
+  admin_role_name: str
+
+map:
+  - data:rw

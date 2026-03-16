@@ -1,0 +1,9 @@
+venv/
+.env
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+requirements-dev.txt
+.gitignore

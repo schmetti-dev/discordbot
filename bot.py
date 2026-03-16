@@ -45,7 +45,7 @@ class BuchclubBot(commands.Bot):
     async def setup_hook(self) -> None:
         """Wird einmalig beim Start aufgerufen — Datenbank + Cogs laden."""
         # Datenbank initialisieren
-        self.db = Database("buchclub.db")
+        self.db = Database(os.getenv("DB_PATH", "/data/buchclub.db"))
         await self.db.setup()
         log.info("Datenbank initialisiert.")
 
