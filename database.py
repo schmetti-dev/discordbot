@@ -40,14 +40,41 @@ class Database:
             CREATE TABLE IF NOT EXISTS reading_progress (
                 user_id         INTEGER NOT NULL,
                 guild_id        INTEGER NOT NULL,
-                mode            TEXT NOT NULL CHECK (mode IN ('pages', 'chapters')),
+                mode            TEXT NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
                 current         INTEGER NOT NULL DEFAULT 0,
                 total_override  INTEGER,   -- User-spezifische Gesamtseitenzahl (Ebook-Anpassung)
+                supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
+                supplement_value INTEGER,   -- Ergänzungswert wenn mode='chapters'
                 updated_at      TEXT DEFAULT (datetime('now')),
                 PRIMARY KEY (user_id, guild_id)
             );
         """)
         await self._conn.commit()
+
+        # Migration: add 'percent' mode + supplement columns to existing databases
+        async with self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reading_progress'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and ("'percent'" not in row[0] or "supplement_mode" not in row[0]):
+                await self._conn.executescript("""
+                    CREATE TABLE reading_progress_new (
+                        user_id          INTEGER NOT NULL,
+                        guild_id         INTEGER NOT NULL,
+                        mode             TEXT NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
+                        current          INTEGER NOT NULL DEFAULT 0,
+                        total_override   INTEGER,
+                        supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
+                        supplement_value INTEGER,
+                        updated_at       TEXT DEFAULT (datetime('now')),
+                        PRIMARY KEY (user_id, guild_id)
+                    );
+                    INSERT INTO reading_progress_new (user_id, guild_id, mode, current, total_override, updated_at)
+                        SELECT user_id, guild_id, mode, current, total_override, updated_at FROM reading_progress;
+                    DROP TABLE reading_progress;
+                    ALTER TABLE reading_progress_new RENAME TO reading_progress;
+                """)
+                await self._conn.commit()
 
     async def close(self) -> None:
         """Verbindung sauber schließen."""
@@ -95,16 +122,21 @@ class Database:
 
     async def update_progress(self, user_id: int, guild_id: int,
                                mode: str, current: int,
-                               total_override: int | None = None) -> None:
+                               total_override: int | None = None,
+                               supplement_mode: str | None = None,
+                               supplement_value: int | None = None) -> None:
         """Lesefortschritt eines Users setzen oder aktualisieren."""
         await self._conn.execute("""
-            INSERT INTO reading_progress (user_id, guild_id, mode, current, total_override, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            INSERT INTO reading_progress
+                (user_id, guild_id, mode, current, total_override, supplement_mode, supplement_value, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(user_id, guild_id) DO UPDATE SET
                 mode=excluded.mode, current=excluded.current,
                 total_override=COALESCE(excluded.total_override, total_override),
+                supplement_mode=excluded.supplement_mode,
+                supplement_value=excluded.supplement_value,
                 updated_at=excluded.updated_at
-        """, (user_id, guild_id, mode, current, total_override))
+        """, (user_id, guild_id, mode, current, total_override, supplement_mode, supplement_value))
         await self._conn.commit()
 
     async def get_progress(self, user_id: int, guild_id: int) -> dict | None:

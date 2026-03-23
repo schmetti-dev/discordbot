@@ -1,6 +1,6 @@
 name: "Buchclub Discord Bot"
 description: "Discord Bot für den Buchclub — trackt Bücher und Lesefortschritt."
-version: "1.0.0"
+version: "1.1.0"
 slug: buchclub_discord_bot
 init: false
 
