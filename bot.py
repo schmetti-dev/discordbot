@@ -52,6 +52,7 @@ class BuchclubBot(commands.Bot):
         # Cogs laden
         await self.load_extension("cogs.books")
         await self.load_extension("cogs.progress")
+        await self.load_extension("cogs.profiles")
         log.info("Cogs geladen.")
 
         # Slash Commands synchronisieren

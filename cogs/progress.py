@@ -84,6 +84,7 @@ class Progress(commands.Cog):
         kapitel="Aktuelles Kapitel (z.B. 5)",
         prozent="Lesefortschritt in Prozent, z.B. vom Kindle (0–100). Auch kombinierbar mit kapitel:",
         seiten_gesamt="Deine persönliche Gesamtseitenzahl (für Ebook-Anpassung)",
+        isbn="ISBN eines anderen Buchs (optional, für paralleles Lesen)",
     )
     async def fortschritt(
         self,
@@ -92,6 +93,7 @@ class Progress(commands.Cog):
         kapitel: int | None = None,
         prozent: app_commands.Range[int, 0, 100] | None = None,
         seiten_gesamt: int | None = None,
+        isbn: str | None = None,
     ) -> None:
         """Lesefortschritt aktualisieren."""
         # kapitel darf mit seite ODER prozent kombiniert werden, aber nicht beides
@@ -110,7 +112,6 @@ class Progress(commands.Cog):
             )
             return
 
-        # seite + kapitel ohne prozent war früher ungültig — jetzt ist kapitel primär, seite supplement
         # nichts angegeben
         if seite is None and kapitel is None and prozent is None:
             await interaction.response.send_message(
@@ -121,6 +122,20 @@ class Progress(commands.Cog):
             return
 
         await interaction.response.defer()
+
+        # Buch bestimmen
+        if isbn:
+            book_isbn = isbn
+            book = await self.bot.db.get_book()  # für Anzeige (total_pages etc.)
+        else:
+            book = await self.bot.db.get_book()
+            if not book:
+                await interaction.followup.send(
+                    "❌ Kein Buch aktiv. Ein Admin kann mit `/buch-setzen` ein Buch festlegen.",
+                    ephemeral=True,
+                )
+                return
+            book_isbn = book["isbn"]
 
         # Modus bestimmen
         if kapitel is not None:
@@ -137,24 +152,34 @@ class Progress(commands.Cog):
         await self.bot.db.update_progress(
             user_id=interaction.user.id,
             guild_id=interaction.guild_id,
+            isbn=book_isbn,
             mode=mode,
             current=current,
             total_override=seiten_gesamt if mode == "pages" else None,
             supplement_mode=sup_mode,
             supplement_value=sup_val,
         )
+        await self.bot.db.increment_fortschritt_count(interaction.user.id, interaction.guild_id)
 
         log.info(
             f"Fortschritt: {interaction.user} → {mode}={current}"
             + (f" +{sup_mode}={sup_val}" if sup_mode else "")
             + (f" (gesamt={seiten_gesamt})" if seiten_gesamt and mode == "pages" else "")
+            + (f" isbn={book_isbn}" if isbn else "")
         )
 
-        book = await self.bot.db.get_book()
-        p = await self.bot.db.get_progress(interaction.user.id, interaction.guild_id)
+        p = await self.bot.db.get_progress(interaction.user.id, interaction.guild_id, book_isbn)
 
-        progress_str = _format_progress(p, book)
-        book_title = f"in *{book['title']}*" if book else ""
+        # Für die Anzeige: bei expliziter ISBN das aktuelle Buch nur nutzen wenn isbn übereinstimmt
+        display_book = book if (book and book["isbn"] == book_isbn) else None
+        progress_str = _format_progress(p, display_book)
+
+        if display_book:
+            book_title = f"in *{display_book['title']}*"
+        elif isbn:
+            book_title = f"(ISBN {book_isbn})"
+        else:
+            book_title = ""
 
         embed = discord.Embed(
             description=f"**{interaction.user.display_name}** liest {book_title}\n{progress_str}",
@@ -173,7 +198,13 @@ class Progress(commands.Cog):
         await interaction.response.defer()
 
         book = await self.bot.db.get_book()
-        entries = await self.bot.db.get_all_progress(interaction.guild_id)
+        if not book:
+            await interaction.followup.send(
+                "📭 Noch kein Buch gesetzt. Ein Admin kann mit `/buch-setzen` ein Buch festlegen."
+            )
+            return
+
+        entries = await self.bot.db.get_all_progress(interaction.guild_id, book["isbn"])
 
         if not entries:
             await interaction.followup.send(
@@ -184,11 +215,11 @@ class Progress(commands.Cog):
 
         embed = discord.Embed(
             title="📚 Lesefortschritt",
-            description=f"**{book['title']}**" if book else "",
+            description=f"**{book['title']}**",
             color=discord.Color.blurple(),
         )
 
-        if book and book.get("cover_url"):
+        if book.get("cover_url"):
             embed.set_thumbnail(url=book["cover_url"])
 
         for entry in entries:
