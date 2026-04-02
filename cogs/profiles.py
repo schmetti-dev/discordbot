@@ -14,13 +14,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.openlibrary import fetch_book_by_isbn
+from cogs.progress import _format_progress
 
 log = logging.getLogger("buchclub.profiles")
-
-# Fortschrittsbalken
-BAR_LENGTH = 10
-BAR_FILLED = "█"
-BAR_EMPTY = "░"
 
 # Level-System: (min_bücher, titel, embed_farbe)
 LEVEL_TIERS = [
@@ -49,39 +45,6 @@ def _get_next_level(books_completed: int) -> tuple[str, int] | None:
         if books_completed < threshold:
             return title, threshold - books_completed
     return None
-
-
-def _progress_bar(current: int, total: int) -> str:
-    if total <= 0:
-        return BAR_EMPTY * BAR_LENGTH
-    filled = round(min(current / total, 1.0) * BAR_LENGTH)
-    return BAR_FILLED * filled + BAR_EMPTY * (BAR_LENGTH - filled)
-
-
-def _format_current_progress(p: dict, book: dict) -> str:
-    """Aktuellen Fortschritt als Textzeile formatieren."""
-    mode = p["mode"]
-    current = p["current"]
-
-    if mode == "pages":
-        total = p.get("total_override") or book.get("total_pages")
-        if total:
-            pct = min(round(current / total * 100), 100)
-            return f"`{_progress_bar(current, total)}` {current}/{total} Seiten ({pct}%)"
-        return f"Seite {current}"
-    elif mode == "percent":
-        return f"`{_progress_bar(current, 100)}` {current}%"
-    else:  # chapters
-        total = book.get("total_chapters")
-        sup_mode = p.get("supplement_mode")
-        sup_val = p.get("supplement_value")
-        chapter_str = f"Kapitel {current}/{total}" if total else f"Kapitel {current}"
-        if sup_mode == "percent" and sup_val is not None:
-            return f"`{_progress_bar(sup_val, 100)}` {chapter_str} ({sup_val}%)"
-        elif total:
-            pct = min(round(current / total * 100), 100)
-            return f"`{_progress_bar(current, total)}` {chapter_str} ({pct}%)"
-        return chapter_str
 
 
 class Profiles(commands.Cog):
@@ -159,7 +122,7 @@ class Profiles(commands.Cog):
 
         # Aktueller Fortschritt
         if profile["progress"] and profile["current_book"]:
-            progress_str = _format_current_progress(profile["progress"], profile["current_book"])
+            progress_str = _format_progress(profile["progress"], profile["current_book"])
             embed.add_field(
                 name=f"Aktuell: _{profile['current_book']['title']}_",
                 value=progress_str,

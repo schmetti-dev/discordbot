@@ -124,11 +124,10 @@ class Progress(commands.Cog):
         await interaction.response.defer()
 
         # Buch bestimmen
+        book = await self.bot.db.get_book()
         if isbn:
             book_isbn = isbn
-            book = await self.bot.db.get_book()  # für Anzeige (total_pages etc.)
         else:
-            book = await self.bot.db.get_book()
             if not book:
                 await interaction.followup.send(
                     "❌ Kein Buch aktiv. Ein Admin kann mit `/buch-setzen` ein Buch festlegen.",
