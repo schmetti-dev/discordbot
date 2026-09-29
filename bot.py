@@ -9,10 +9,11 @@ import os
 import logging
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 from database import Database
+from services.backup import backup_dir, run_backup
 
 # Logging einrichten
 logging.basicConfig(
@@ -27,8 +28,7 @@ load_dotenv()
 
 # Intents — welche Discord-Events der Bot empfangen darf
 intents = discord.Intents.default()
-intents.message_content = True  # Für zukünftige Prefix-Erweiterungen
-intents.members = True
+intents.members = True  # /buchketiere zeigt die Anzeigenamen der Mitglieder
 
 
 class BuchclubBot(commands.Bot):
@@ -53,7 +53,14 @@ class BuchclubBot(commands.Bot):
         await self.load_extension("cogs.books")
         await self.load_extension("cogs.progress")
         await self.load_extension("cogs.profiles")
+        await self.load_extension("cogs.goals")
         log.info("Cogs geladen.")
+
+        if backup_dir():
+            self.backup_loop.start()
+            log.info(f"Tägliche Sicherung nach {backup_dir()} eingerichtet.")
+        else:
+            log.warning("BACKUP_DIR ist nicht gesetzt: es gibt keine Sicherung der Datenbank.")
 
         # Slash Commands synchronisieren
         guild_id = os.getenv("DISCORD_GUILD_ID")
@@ -67,6 +74,21 @@ class BuchclubBot(commands.Bot):
             # Produktivmodus: global (bis zu 1h Verzögerung)
             await self.tree.sync()
             log.info("Slash Commands global synchronisiert.")
+
+    @tasks.loop(hours=24)
+    async def backup_loop(self) -> None:
+        try:
+            await run_backup(self.db)
+        except Exception:
+            log.exception("Sicherung fehlgeschlagen.")
+
+    async def close(self) -> None:
+        """Beim Herunterfahren die Datenbank sauber schließen."""
+        if self.backup_loop.is_running():
+            self.backup_loop.cancel()
+        if self.db:
+            await self.db.close()
+        await super().close()
 
     async def on_ready(self) -> None:
         """Wird aufgerufen wenn der Bot verbunden und bereit ist."""

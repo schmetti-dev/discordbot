@@ -38,3 +38,8 @@ env/
 # Windows
 Thumbs.db
 ehthumbs.db
+
+# Betriebsdaten
+deploy/nas/.env
+deploy/nas/data/
+backup/

@@ -12,6 +12,8 @@ Das ermöglicht sauberes Testen mit :memory: Datenbanken.
 
 import aiosqlite
 
+from migrations import migrate
+
 
 class Database:
     def __init__(self, path: str):
@@ -19,89 +21,11 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def setup(self) -> None:
-        """Verbindung öffnen und Schema erstellen falls nicht vorhanden."""
+        """Verbindung öffnen und Schema auf den aktuellen Stand bringen."""
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
-        await self._conn.executescript("""
-            -- Aktuelles Buch (immer max. 1 Eintrag)
-            CREATE TABLE IF NOT EXISTS current_book (
-                id          INTEGER PRIMARY KEY CHECK (id = 1),
-                isbn        TEXT NOT NULL,
-                title       TEXT NOT NULL,
-                author      TEXT,
-                description TEXT,
-                cover_url   TEXT,
-                total_pages INTEGER,       -- Aus API, anpassbar
-                total_chapters INTEGER,    -- Optional, manuell gesetzt
-                set_by      INTEGER,       -- Discord User ID des Admins
-                set_at      TEXT DEFAULT (datetime('now'))
-            );
-
-            -- Lesefortschritt pro User + Buch (isbn als Teil des PK für History)
-            CREATE TABLE IF NOT EXISTS reading_progress (
-                user_id          INTEGER NOT NULL,
-                guild_id         INTEGER NOT NULL,
-                isbn             TEXT    NOT NULL DEFAULT '',
-                mode             TEXT    NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
-                current          INTEGER NOT NULL DEFAULT 0,
-                total_override   INTEGER,
-                supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
-                supplement_value INTEGER,
-                updated_at       TEXT DEFAULT (datetime('now')),
-                PRIMARY KEY (user_id, guild_id, isbn)
-            );
-
-            -- User-Statistiken (Aktivitätszähler)
-            CREATE TABLE IF NOT EXISTS user_stats (
-                user_id           INTEGER NOT NULL,
-                guild_id          INTEGER NOT NULL,
-                fortschritt_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, guild_id)
-            );
-        """)
-        await self._conn.commit()
-
-        # Migration: add 'percent' mode + supplement columns to existing databases
-        async with self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reading_progress'"
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row and ("'percent'" not in row[0] or "supplement_mode" not in row[0]):
-                await self._conn.executescript("""
-                    CREATE TABLE reading_progress_new (
-                        user_id          INTEGER NOT NULL,
-                        guild_id         INTEGER NOT NULL,
-                        isbn             TEXT    NOT NULL DEFAULT '',
-                        mode             TEXT NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
-                        current          INTEGER NOT NULL DEFAULT 0,
-                        total_override   INTEGER,
-                        supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
-                        supplement_value INTEGER,
-                        updated_at       TEXT DEFAULT (datetime('now')),
-                        PRIMARY KEY (user_id, guild_id, isbn)
-                    );
-                    INSERT INTO reading_progress_new (user_id, guild_id, mode, current, total_override, updated_at)
-                        SELECT user_id, guild_id, mode, current, total_override, updated_at FROM reading_progress;
-                    DROP TABLE reading_progress;
-                    ALTER TABLE reading_progress_new RENAME TO reading_progress;
-                """)
-                await self._conn.commit()
-
-        # Migration: add isbn column if missing (existing DBs without it)
-        async with self._conn.execute(
-            "PRAGMA table_info(reading_progress)"
-        ) as cursor:
-            cols = [row[1] for row in await cursor.fetchall()]
-        if "isbn" not in cols:
-            await self._conn.execute(
-                "ALTER TABLE reading_progress ADD COLUMN isbn TEXT NOT NULL DEFAULT ''"
-            )
-            await self._conn.execute("""
-                UPDATE reading_progress
-                SET isbn = COALESCE((SELECT isbn FROM current_book WHERE id = 1), '')
-                WHERE isbn = ''
-            """)
-            await self._conn.commit()
+        await self._conn.execute("PRAGMA foreign_keys = ON")
+        await migrate(self._conn)
 
     async def close(self) -> None:
         """Verbindung sauber schließen."""
@@ -243,3 +167,79 @@ class Database:
             "progress": current_progress,
             "current_book": book,
         }
+
+    # ── Leseziele ─────────────────────────────────────────────────────────────
+
+    async def set_goal(self, user_id: int, guild_id: int, isbn: str, unit: str,
+                       target: int, deadline: str, start_value: int, start_date: str) -> None:
+        """Leseziel setzen oder ersetzen. Eine eingeschaltete Erinnerung bleibt bestehen."""
+        await self._conn.execute("""
+            INSERT INTO reading_goals (user_id, guild_id, isbn, unit, target, deadline, start_value, start_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET
+                unit=excluded.unit, target=excluded.target, deadline=excluded.deadline,
+                start_value=excluded.start_value, start_date=excluded.start_date,
+                created_at=datetime('now')
+        """, (user_id, guild_id, isbn, unit, target, deadline, start_value, start_date))
+        await self._conn.commit()
+
+    async def get_goal(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
+        async with self._conn.execute("""
+            SELECT * FROM reading_goals WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def delete_goal(self, user_id: int, guild_id: int, isbn: str) -> bool:
+        """Leseziel löschen. Die Erinnerung dazu verschwindet mit."""
+        cursor = await self._conn.execute("""
+            DELETE FROM reading_goals WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    # ── Erinnerungen ──────────────────────────────────────────────────────────
+
+    async def enable_reminder(self, user_id: int, guild_id: int, isbn: str, interval_days: int) -> None:
+        """Erinnerung einschalten. Nur der Befehl des Mitglieds ruft das auf."""
+        await self._conn.execute("""
+            INSERT INTO reading_reminders (user_id, guild_id, isbn, interval_days)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET interval_days=excluded.interval_days
+        """, (user_id, guild_id, isbn, interval_days))
+        await self._conn.commit()
+
+    async def disable_reminder(self, user_id: int, guild_id: int, isbn: str) -> bool:
+        cursor = await self._conn.execute("""
+            DELETE FROM reading_reminders WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_reminder(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
+        async with self._conn.execute("""
+            SELECT * FROM reading_reminders WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_reminders(self, isbn: str) -> list[dict]:
+        """Alle eingeschalteten Erinnerungen für ein Buch."""
+        async with self._conn.execute(
+            "SELECT * FROM reading_reminders WHERE isbn = ?", (isbn,)
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def mark_reminder_sent(self, user_id: int, guild_id: int, isbn: str, sent_at: str) -> None:
+        await self._conn.execute("""
+            UPDATE reading_reminders SET last_sent_at = ?
+            WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (sent_at, user_id, guild_id, isbn))
+        await self._conn.commit()
+
+    # ── Sicherung ─────────────────────────────────────────────────────────────
+
+    async def backup_to(self, target_path: str) -> None:
+        """Vollständige Kopie über SQLites eigene Sicherung, auch während geschrieben wird."""
+        async with aiosqlite.connect(target_path) as target:
+            await self._conn.backup(target)
