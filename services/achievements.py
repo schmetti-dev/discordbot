@@ -30,6 +30,7 @@ class Achievement:
     tier_names: tuple[str, ...] = ()
     text: str = ""                 # {n} = Kennzahl
     hint: str = ""                 # Wie man es bekommt; bei geheimen leer
+    shared: str = ""               # Satz beim Teilen, {name} = Mitglied
 
 
 CATALOGUE = [
@@ -37,56 +38,68 @@ CATALOGUE = [
         "letzte_seite", "Bis zur letzten Seite", "open-book", "tiered", "books_finished", (1, 3, 10, 25),
         ("Das hölzerne Buch", "Das bronzene Buch", "Das silberne Buch", "Das goldene Buch"),
         "{n} {buch} bis zur letzten Seite gelesen. Auch das Nachwort? Wir fragen lieber nicht.",
+        shared="{name} hat {n} {buch} bis zur letzten Seite gelesen. Ob auch das Nachwort, bleibt ein Geheimnis.",
     ),
     Achievement(
         "fleissig", "Fleißiges Buchketier", "quill-ink", "tiered", "fortschritt_count", (10, 50, 150, 500),
         text="{n}× /fortschritt. Du meldest dich öfter zum Rapport als jeder Gardist.",
+        shared="{name} hat sich {n}× mit /fortschritt zum Rapport gemeldet.",
     ),
     Achievement(
         "streber", "Streber", "graduate-cap", "tiered", "goals_reached_early", (1, 3, 10, 25),
         text="{n} {ziel} vor dem Datum erreicht. Die Hausaufgaben sind sicher auch schon gemacht.",
+        shared="{name} hat {n} {ziel} vor dem Datum erreicht. Streber!",
     ),
     Achievement(
         "plaudertasche", "Plaudertasche", "parrot-head", "tiered", "thread_messages", (25, 100, 250, 500),
         text="{n} Beiträge in den Buch-Threads. Mehr als manche Autoren in ihren Büchern.",
+        shared="{name} hat {n} Beiträge in den Buch-Threads geschrieben. Mehr als manche Autoren in ihren Büchern.",
     ),
     Achievement(
         "seitenfresser", "Seitenfresser", "apple-maggot", "tiered", "pages_read", (500, 2000, 10000, 25000),
         ("Leseraupe", "Bücherwurm", "Büchernarr", "Großmeister der Seiten"),
         "{n} Seiten verschlungen.",
+        shared="{name} hat {n} Seiten verschlungen.",
     ),
     Achievement(
         "gascogne", "Frisch aus der Gascogne", "horse-head", "single", "fortschritt_count", (1,),
         text="Dein erster Eintrag. Frisch in Paris, über dein Pferd wird noch gelacht.",
         hint="Trag zum ersten Mal deinen Fortschritt ein.",
+        shared="{name} ist frisch aus der Gascogne angekommen. Über das Pferd wird noch gelacht.",
     ),
     Achievement(
         "schnellster_degen", "Schnellster Degen", "sword-brandish", "single", "first_finishes", (1,),
         text="Du hast ein Clubbuch als Erste·r ausgelesen.",
         hint="Lies ein Clubbuch als Erste·r aus.",
+        shared="{name} hat ein Clubbuch als Erste·r ausgelesen. Schnellster Degen!",
     ),
     Achievement(
         "einer_fuer_alle", "Einer für alle", "crossed-swords", "single", "all_finished_books", (1,),
         text="Alle, die das Buch angefangen haben, haben es auch beendet. Einer für alle, alle für einen!",
         hint="Alle, die ein Clubbuch angefangen haben, lesen es auch zu Ende.",
+        shared="Alle haben das Buch zu Ende gelesen, {name} war dabei. Einer für alle, alle für einen!",
     ),
     Achievement(
         "naechtlicher_ausritt", "Nächtlicher Ausritt", "owl", "single",
         text="Ein Eintrag zwischen Mitternacht und vier Uhr. Musketiere reiten auch nachts.",
         hint="Trag deinen Fortschritt zwischen Mitternacht und vier Uhr ein.",
+        shared="{name} reitet auch nachts: ein Eintrag zwischen Mitternacht und vier Uhr.",
     ),
     Achievement(
         "gewaltritt", "Gewaltritt", "cloaked-figure-on-horseback", "single",
         text="Ein Viertel des Buchs an einem Tag. Das Pferd braucht jetzt eine Pause.",
         hint="Lies ein Viertel eines Buchs innerhalb von 24 Stunden.",
+        shared="{name} hat ein Viertel des Buchs an einem Tag gelesen. Das Pferd braucht eine Pause.",
     ),
     Achievement(
         "diamantspangen", "Die zwölf Diamantspangen", "gem-pendant", "secret", "books_finished", (12,),
         text="Zwölf Bücher, zwölf Spangen. Diesmal fehlen keine zwei.",
+        shared="{name} hat zwölf Bücher ausgelesen. Die zwölf Diamantspangen sind vollzählig.",
     ),
     Achievement(
         "freibrief", "Freibrief des Kardinals", "wax-seal", "secret",
         text="Du liest nebenher ein eigenes Buch. Mit Freibrief, versteht sich.",
+        shared="{name} liest mit Freibrief des Kardinals ein eigenes Buch nebenher.",
     ),
 ]
 BY_KEY = {a.key: a for a in CATALOGUE}
@@ -228,6 +241,23 @@ def unlock_text(key: str, tier: int, stats: dict) -> str:
     achievement = BY_KEY[key]
     value = stats.get(achievement.stat, 0) if achievement.stat else 0
     return achievement.text.format(
+        n=value,
+        buch="Buch" if value == 1 else "Bücher",
+        ziel="Leseziel" if value == 1 else "Leseziele",
+    )
+
+
+def share_text(key: str, tier: int, stats: dict, name: str) -> str:
+    """Der öffentliche Satz, wenn ein Mitglied ein Achievement teilt."""
+    if key == RANK_KEY:
+        return f"{name} wurde befördert: **{RANKS[tier][1]}**. {RANKS[tier][3]}"
+    achievement = BY_KEY[key]
+    value = stats.get(achievement.stat, 0) if achievement.stat else 0
+    # Bei gestuften zählt die Schwelle der geteilten Stufe, nicht der heutige Stand.
+    if achievement.kind == "tiered":
+        value = achievement.thresholds[tier - 1]
+    return achievement.shared.format(
+        name=name,
         n=value,
         buch="Buch" if value == 1 else "Bücher",
         ziel="Leseziel" if value == 1 else "Leseziele",

@@ -91,6 +91,13 @@ class BuchclubBot(commands.Bot):
             await self.db.close()
         await super().close()
 
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Wie spät ein Befehl beim Bot ankommt. Discord wartet nur drei Sekunden auf die erste Antwort."""
+        lag = (discord.utils.utcnow() - interaction.created_at).total_seconds()
+        if lag > 1.5:
+            name = (interaction.data or {}).get("name") or (interaction.data or {}).get("custom_id") or interaction.type.name
+            log.warning(f"Interaktion '{name}' kam {lag:.1f} s nach dem Klick an.")
+
     async def on_ready(self) -> None:
         """Wird aufgerufen wenn der Bot verbunden und bereit ist."""
         log.info(f"✅ Bot bereit als {self.user} (ID: {self.user.id})")

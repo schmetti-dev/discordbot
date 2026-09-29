@@ -29,6 +29,7 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 | `/erinnerung an [alle_tage]` | Private Erinnerung einschalten | Alle |
 | `/erinnerung aus` | Erinnerung ausschalten | Alle |
 | `/achievements` | Eigene Achievements, Rang und nächste Stufen | Alle |
+| `/achievement-teilen <achievement>` | Eines der eigenen Achievements mit allen teilen | Alle |
 
 ### Leseziele und Erinnerungen
 
@@ -71,7 +72,7 @@ python bot.py
 
 ### Achievements und Ränge
 
-Achievements sind privat. Jedes Mitglied sieht nur die eigenen: nach dem eigenen `/fortschritt` und mit `/achievements`, beides nur für sich sichtbar. Der Bot postet sie nirgends.
+Achievements sind privat. Jedes Mitglied sieht nur die eigenen: nach dem eigenen `/fortschritt` und mit `/achievements`, beides nur für sich sichtbar. Öffentlich wird ein Achievement nur, wenn man es selbst teilt: mit dem Knopf „Teilen“ unter der Freischaltung oder mit `/achievement-teilen`. Dann erscheint es einmal im Thread des aktuellen Buchs.
 
 | Achievement | Wofür | Stufen (Holz / Bronze / Silber / Gold) |
 |---|---|---|

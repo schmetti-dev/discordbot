@@ -190,11 +190,17 @@ async def _achievements(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def _shared_at(conn: aiosqlite.Connection) -> None:
+    """Wann ein Mitglied ein Achievement mit allen geteilt hat. Jedes wird höchstens einmal geteilt."""
+    await conn.execute("ALTER TABLE achievements ADD COLUMN shared_at TEXT")
+
+
 MIGRATIONS = [
     (1, "Grundschema bis v1.1.0", _baseline),
     (2, "Leseziele und Erinnerungen", _goals_and_reminders),
     (3, "Abschlussdatum am Lesefortschritt", _completed_at),
     (4, "Achievements", _achievements),
+    (5, "Geteilte Achievements", _shared_at),
 ]
 
 

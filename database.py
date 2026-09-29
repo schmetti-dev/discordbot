@@ -388,6 +388,13 @@ class Database:
         await self._conn.commit()
         return new
 
+    async def get_unshared(self, user_id: int, guild_id: int) -> list[tuple[str, int]]:
+        async with self._conn.execute("""
+            SELECT key, tier FROM achievements WHERE user_id = ? AND guild_id = ? AND shared_at IS NULL
+            ORDER BY unlocked_at DESC, key, tier
+        """, (user_id, guild_id)) as cursor:
+            return [(row[0], row[1]) for row in await cursor.fetchall()]
+
     async def get_unseen(self, user_id: int, guild_id: int) -> list[tuple[str, int]]:
         async with self._conn.execute("""
             SELECT key, tier FROM achievements WHERE user_id = ? AND guild_id = ? AND seen = 0
@@ -399,4 +406,23 @@ class Database:
         await self._conn.execute(
             "UPDATE achievements SET seen = 1 WHERE user_id = ? AND guild_id = ?", (user_id, guild_id)
         )
+        await self._conn.commit()
+
+    async def claim_share(self, user_id: int, guild_id: int, key: str, tier: int) -> bool:
+        """
+        Merkt ein Achievement als geteilt. True nur beim ersten Mal und nur, wenn
+        es dem Mitglied gehört; so kann niemand fremde oder doppelt teilen.
+        """
+        cursor = await self._conn.execute("""
+            UPDATE achievements SET shared_at = datetime('now')
+            WHERE user_id = ? AND guild_id = ? AND key = ? AND tier = ? AND shared_at IS NULL
+        """, (user_id, guild_id, key, tier))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def release_share(self, user_id: int, guild_id: int, key: str, tier: int) -> None:
+        """Teilen zurücknehmen, wenn der Post nicht rausging."""
+        await self._conn.execute("""
+            UPDATE achievements SET shared_at = NULL WHERE user_id = ? AND guild_id = ? AND key = ? AND tier = ?
+        """, (user_id, guild_id, key, tier))
         await self._conn.commit()

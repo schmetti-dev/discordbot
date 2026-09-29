@@ -12,10 +12,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogs.achievements import after_progress, check_member, should_count, unlock_messages
+import re
+
+import discord
+
+from cogs.achievements import (
+    SHARE_PATTERN, ShareButton, after_progress, check_member, share_achievement, should_count, show_unseen, unlock_messages,
+    valid_achievement,
+)
 from database import Database
 from services.achievements import (
-    BY_KEY, CATALOGUE, RANK_KEY, badge_specs, earned, event_unlocks, next_rank, overview, rank_for, unlock_title,
+    BY_KEY, CATALOGUE, RANK_KEY, badge_specs, earned, event_unlocks, next_rank, overview, rank_for, share_text, unlock_title,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -217,8 +224,8 @@ class Followup:
     def __init__(self):
         self.sent = []
 
-    async def send(self, **kwargs):
-        self.sent.append(kwargs)
+    async def send(self, content=None, **kwargs):
+        self.sent.append({"content": content, **kwargs})
 
 
 def interaction_for(user_id):
@@ -264,14 +271,111 @@ async def test_after_progress_never_breaks_the_entry(db):
 
 # ── Privatsphäre ──────────────────────────────────────────────────────────────
 
-def test_achievement_code_only_answers_privately():
+def test_only_sharing_goes_public():
+    """Jeder Sendeaufruf ist ephemeral, mit genau einer Ausnahme: der Post in share_achievement."""
     tree = ast.parse((ROOT / "cogs" / "achievements.py").read_text())
-    sends = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "send_message", "defer"):
-            owner = ast.unparse(node.func.value)
-            ephemeral = any(k.arg == "ephemeral" and getattr(k.value, "value", None) is True for k in node.keywords)
-            sends.append((owner, node.func.attr, ephemeral))
-    assert sends, "keine Sendeaufrufe gefunden"
-    assert all(ephemeral for _, _, ephemeral in sends), sends
-    assert all(owner.startswith("interaction") for owner, _, _ in sends), sends
+    private, public = [], []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "send_message", "defer"):
+                owner = ast.unparse(node.func.value)
+                ephemeral = any(k.arg == "ephemeral" and getattr(k.value, "value", None) is True for k in node.keywords)
+                (private if ephemeral else public).append((function.name, owner))
+                if ephemeral:
+                    assert owner.startswith("interaction"), (function.name, owner)
+    assert private
+    assert public == [("share_achievement", "channel")], public
+
+
+# ── Teilen ────────────────────────────────────────────────────────────────────
+
+class Channel:
+    def __init__(self, fail=False):
+        self.posts, self.fail, self.mention = [], fail, "#002"
+
+    async def send(self, **kwargs):
+        if self.fail:
+            raise discord.HTTPException(SimpleNamespace(status=500, reason="kaputt"), "kaputt")
+        self.posts.append(kwargs)
+
+
+class Response:
+    def __init__(self):
+        self.deferred = []
+
+    async def defer(self, **kwargs):
+        self.deferred.append(kwargs)
+
+
+def share_setup(db, channel):
+    bot = SimpleNamespace(db=db, get_channel=lambda _id: channel)
+    interaction = SimpleNamespace(
+        user=SimpleNamespace(id=1, mention="<@1>"), guild_id=GUILD, channel=channel,
+        response=Response(), followup=Followup(),
+    )
+    return bot, interaction
+
+
+async def test_share_posts_once_in_the_book_thread(db):
+    await db.set_book_thread(BOOK1, 111)
+    await db.store_achievements(1, GUILD, {("letzte_seite", 1)})
+    thread = Channel()
+    bot, interaction = share_setup(db, thread)
+
+    assert await share_achievement(bot, interaction, "letzte_seite", 1) is True
+    assert len(thread.posts) == 1
+    post = thread.posts[0]
+    assert "hölzerne Buch" in post["embed"].title and "<@1>" in post["embed"].description
+    assert post["allowed_mentions"].users is False
+    assert all(m["ephemeral"] for m in interaction.followup.sent)
+
+    assert await share_achievement(bot, interaction, "letzte_seite", 1) is False
+    assert len(thread.posts) == 1
+    assert interaction.followup.sent[-1]["content"] == "Das hast du schon geteilt."
+
+
+async def test_nobody_shares_what_they_do_not_have(db):
+    thread = Channel()
+    bot, interaction = share_setup(db, thread)
+    assert await share_achievement(bot, interaction, "diamantspangen", 0) is False
+    assert await share_achievement(bot, interaction, "gibt_es_nicht", 0) is False
+    assert thread.posts == []
+    assert [m["content"] for m in interaction.followup.sent] == ["Dieses Achievement hast du (noch) nicht."] * 2
+
+
+async def test_failed_post_can_be_shared_again(db):
+    await db.store_achievements(1, GUILD, {("gascogne", 0)})
+    bot, interaction = share_setup(db, Channel(fail=True))
+    assert await share_achievement(bot, interaction, "gascogne", 0) is False
+    assert await db.get_unshared(1, GUILD) == [("gascogne", 0)]
+
+
+async def test_unseen_notes_carry_one_share_button_each(db):
+    await db.store_achievements(1, GUILD, {("gascogne", 0), ("letzte_seite", 1)})
+    interaction = interaction_for(1)
+    assert await show_unseen(interaction, db) == 2
+    view = interaction.followup.sent[0]["view"]
+    assert sorted(item.custom_id for item in view.children) == ["buchketiere:teilen:gascogne:0", "buchketiere:teilen:letzte_seite:1"]
+
+
+async def test_share_button_survives_a_restart():
+    button = ShareButton("letzte_seite", 1)
+    match = re.fullmatch(SHARE_PATTERN, button.item.custom_id)
+    rebuilt = await ShareButton.from_custom_id(None, None, match)
+    assert (rebuilt.key, rebuilt.tier) == ("letzte_seite", 1)
+    assert len(button.item.label) <= 80
+
+
+def test_share_text_names_the_shared_tier():
+    assert share_text("letzte_seite", 1, stats(books_finished=3), "<@1>").startswith("<@1> hat 1 Buch bis zur letzten Seite")
+    assert share_text(RANK_KEY, 1, stats(), "<@1>") == "<@1> wurde befördert: **Gardist bei des Essarts**. Noch kein Buchketier, aber schon in Uniform."
+    assert all(a.shared for a in CATALOGUE)
+
+
+def test_valid_achievement():
+    assert valid_achievement("letzte_seite", 4) and not valid_achievement("letzte_seite", 5)
+    assert valid_achievement("gascogne", 0) and not valid_achievement("gascogne", 1)
+    assert valid_achievement(RANK_KEY, 5) and not valid_achievement(RANK_KEY, 6)
+    assert not valid_achievement("gibt_es_nicht", 0)
