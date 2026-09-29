@@ -112,6 +112,25 @@ cp /pfad/zur/sicherung/buchclub-<Zeitpunkt>.db data/buchclub.db
 docker compose up -d
 ```
 
+### Fehlersuche: „Die Anwendung reagiert nicht“
+
+Discord wartet nur drei Sekunden auf die erste Antwort eines Befehls. Löst der Container Namen langsam auf, ist die Zeit schon beim ersten Befehl nach einer Pause um. Prüfen:
+
+```bash
+docker exec buchketiere python -c "import socket,time; t=time.monotonic(); socket.getaddrinfo('discord.com', 443); print(time.monotonic()-t)"
+```
+
+Dauert das mehr als einen Bruchteil einer Sekunde, dem Container einen schnellen DNS-Server geben, z.B. den Router, in `deploy/nas/compose.override.yaml` (wird von `docker compose` automatisch gelesen und gehört nicht ins Repo):
+
+```yaml
+services:
+  buchketiere:
+    dns:
+      - 192.168.0.1
+```
+
+Kommt ein Befehl selbst schon spät beim Bot an, steht das im Log als `Interaktion '…' kam … s nach dem Klick an`.
+
 ### Schema-Änderungen
 
 Änderungen am Datenbankschema sind nummerierte Migrationen in `migrations.py`. Jede läuft genau einmal, festgehalten in der Tabelle `schema_version`. Eine neue Änderung kommt als neuer Eintrag ans Ende der Liste; bestehende Einträge werden nicht verändert.
