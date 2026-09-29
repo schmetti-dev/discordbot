@@ -14,6 +14,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from services.goals import is_complete
+
 log = logging.getLogger("buchclub.progress")
 
 # Fortschrittsbalken: 10 Blöcke
@@ -148,6 +150,12 @@ class Progress(commands.Cog):
             mode, current = "percent", prozent
             sup_mode, sup_val = None, None
 
+        # Gesamtzahlen kennt der Bot nur fürs aktuelle Buch.
+        known = book if (book and book["isbn"] == book_isbn) else None
+        previous = await self.bot.db.get_progress(interaction.user.id, interaction.guild_id, book_isbn)
+        pages_total = seiten_gesamt or (previous or {}).get("total_override") or (known or {}).get("total_pages")
+        completed = is_complete(mode, current, sup_mode, sup_val, pages_total, (known or {}).get("total_chapters"))
+
         await self.bot.db.update_progress(
             user_id=interaction.user.id,
             guild_id=interaction.guild_id,
@@ -157,6 +165,7 @@ class Progress(commands.Cog):
             total_override=seiten_gesamt if mode == "pages" else None,
             supplement_mode=sup_mode,
             supplement_value=sup_val,
+            completed=completed,
         )
         await self.bot.db.increment_fortschritt_count(interaction.user.id, interaction.guild_id)
 

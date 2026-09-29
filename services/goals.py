@@ -46,6 +46,20 @@ def progress_in_unit(progress: dict | None, unit: str, book: dict | None) -> int
     return None
 
 
+def is_complete(mode: str, current: int, supplement_mode: str | None, supplement_value: int | None,
+                total_pages: int | None, total_chapters: int | None) -> bool:
+    """Ob dieser Stand das Ende des Buchs ist. Ohne bekannte Gesamtzahl zählt nur 100 %."""
+    if mode == "percent":
+        return current >= 100
+    if supplement_mode == "percent" and supplement_value is not None and supplement_value >= 100:
+        return True
+    if mode == "pages":
+        return bool(total_pages) and current >= total_pages
+    if supplement_mode == "pages" and supplement_value is not None and total_pages and supplement_value >= total_pages:
+        return True
+    return bool(total_chapters) and current >= total_chapters
+
+
 @dataclass(frozen=True)
 class Pace:
     state: str            # 'reached' | 'overdue' | 'open'

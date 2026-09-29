@@ -12,7 +12,7 @@ import pytest
 
 from cogs.goals import parse_date, send_due_reminders
 from database import Database
-from services.goals import compute_pace, describe_pace, progress_in_unit, reminder_is_due
+from services.goals import compute_pace, describe_pace, is_complete, progress_in_unit, reminder_is_due
 
 ISBN = "9783453319875"
 GUILD = 999
@@ -258,3 +258,47 @@ def test_parse_date_accepts_both_forms():
     assert parse_date(" 2026-10-31 ") == date(2026, 10, 31)
     assert parse_date("morgen") is None
     assert parse_date("31.02.2026") is None
+
+
+# ── Wann ein Buch als abgeschlossen gilt ──────────────────────────────────────
+
+def test_is_complete():
+    assert is_complete("percent", 100, None, None, None, None) is True
+    assert is_complete("percent", 99, None, None, None, None) is False
+    assert is_complete("pages", 352, None, None, 352, 18) is True
+    assert is_complete("pages", 351, None, None, 352, 18) is False
+    assert is_complete("chapters", 18, None, None, 352, 18) is True
+    assert is_complete("chapters", 17, None, None, 352, 18) is False
+    assert is_complete("chapters", 11, "percent", 100, None, None) is True
+    assert is_complete("chapters", 11, "pages", 352, 352, 18) is True
+
+
+def test_nothing_is_complete_without_a_known_total():
+    assert is_complete("pages", 9999, None, None, None, None) is False
+    assert is_complete("chapters", 99, None, None, None, None) is False
+
+
+async def test_profile_counts_only_finished_books(db):
+    await db.update_progress(1, GUILD, ISBN, "percent", 100, completed=True)
+    await db.update_progress(2, GUILD, ISBN, "percent", 46)
+    await db.set_book("9783492954525", "Das nächste Buch", None, None, None, None, 1)
+
+    assert (await db.get_user_profile(1, GUILD))["books_completed"] == 1
+    assert (await db.get_user_profile(1, GUILD))["last_isbn"] == ISBN
+    assert (await db.get_user_profile(2, GUILD))["books_completed"] == 0
+    assert (await db.get_user_profile(2, GUILD))["last_isbn"] is None
+
+
+async def test_finished_current_book_counts_right_away(db):
+    await db.update_progress(1, GUILD, ISBN, "pages", 1000, completed=True)
+    assert (await db.get_user_profile(1, GUILD))["books_completed"] == 1
+
+
+async def test_first_completion_date_stays_and_a_correction_clears_it(db):
+    await db.update_progress(1, GUILD, ISBN, "percent", 100, completed=True)
+    await db._conn.execute("UPDATE reading_progress SET completed_at = '2026-05-09 10:00:00'")
+    await db.update_progress(1, GUILD, ISBN, "percent", 100, completed=True)
+    assert (await db.get_progress(1, GUILD, ISBN))["completed_at"] == "2026-05-09 10:00:00"
+
+    await db.update_progress(1, GUILD, ISBN, "percent", 80)
+    assert (await db.get_progress(1, GUILD, ISBN))["completed_at"] is None

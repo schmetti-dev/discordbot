@@ -122,9 +122,32 @@ async def _goals_and_reminders(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def _completed_at(conn: aiosqlite.Connection) -> None:
+    """
+    Merkt sich, wann ein Buch zu Ende gelesen wurde. Vorher galt jedes frühere
+    Buch mit irgendeinem Eintrag als abgeschlossen, auch ein abgebrochenes.
+    """
+    await conn.execute("ALTER TABLE reading_progress ADD COLUMN completed_at TEXT")
+    # Bestehende Einträge: sicher abgeschlossen ist, wer 100 % eingetragen hat ...
+    await conn.execute("""
+        UPDATE reading_progress SET completed_at = updated_at
+        WHERE (mode = 'percent' AND current >= 100)
+           OR (supplement_mode = 'percent' AND supplement_value >= 100)
+    """)
+    # ... oder beim aktuellen Buch die letzte Seite oder das letzte Kapitel erreicht hat.
+    await conn.execute("""
+        UPDATE reading_progress SET completed_at = updated_at
+        WHERE completed_at IS NULL AND isbn = (SELECT isbn FROM current_book WHERE id = 1) AND (
+            (mode = 'pages' AND current >= COALESCE(total_override, (SELECT total_pages FROM current_book WHERE id = 1)))
+         OR (mode = 'chapters' AND current >= (SELECT total_chapters FROM current_book WHERE id = 1))
+        )
+    """)
+
+
 MIGRATIONS = [
     (1, "Grundschema bis v1.1.0", _baseline),
     (2, "Leseziele und Erinnerungen", _goals_and_reminders),
+    (3, "Abschlussdatum am Lesefortschritt", _completed_at),
 ]
 
 

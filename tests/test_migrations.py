@@ -12,6 +12,7 @@ import aiosqlite
 import pytest
 
 from database import Database
+import migrations
 from migrations import MIGRATIONS, migrate
 from services.backup import prune, run_backup, verify
 
@@ -91,12 +92,13 @@ async def test_migrations_run_once(tmp_path):
 async def test_database_from_last_release_keeps_its_isbn_history(tmp_path):
     # v1.1.0 hatte schon das volle Grundschema, aber keine Versionstabelle.
     path = str(tmp_path / "v110.db")
-    first = Database(path)
-    await first.setup()
-    await first.update_progress(1, 999, "1111111111", "pages", 300)
-    await first.update_progress(1, 999, ISBN, "pages", 42)
-    await first._conn.executescript("DROP TABLE schema_version; DROP TABLE reading_reminders; DROP TABLE reading_goals;")
-    await first.close()
+    async with aiosqlite.connect(path) as conn:
+        await migrations._baseline(conn)
+        await conn.executemany(
+            "INSERT INTO reading_progress (user_id, guild_id, isbn, mode, current) VALUES (1, 999, ?, 'pages', ?)",
+            [("1111111111", 300), (ISBN, 42)],
+        )
+        await conn.commit()
 
     db = Database(path)
     await db.setup()
@@ -156,3 +158,39 @@ def test_verify_rejects_a_broken_file(tmp_path):
     broken.write_bytes(b"das ist keine Datenbank" * 100)
     with pytest.raises(sqlite3.DatabaseError):
         verify(broken)
+
+
+async def test_completion_is_backfilled_for_existing_entries(tmp_path):
+    path = str(tmp_path / "before3.db")
+    async with aiosqlite.connect(path) as conn:
+        for version, name, step in MIGRATIONS[:2]:
+            await step(conn)
+        await conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')))")
+        await conn.executemany("INSERT INTO schema_version (version, name) VALUES (?, ?)", [(1, "a"), (2, "b")])
+        await conn.execute("INSERT INTO current_book (id, isbn, title, total_pages, total_chapters) VALUES (1, ?, 'Buch', 352, 18)", (ISBN,))
+        await conn.executemany(
+            "INSERT INTO reading_progress (user_id, guild_id, isbn, mode, current, updated_at) VALUES (?, 999, ?, ?, ?, ?)",
+            [(1, ISBN, "percent", 100, "2026-05-09 10:00:00"), (2, ISBN, "percent", 46, "2026-03-26 10:00:00"),
+             (3, ISBN, "pages", 352, "2026-05-28 10:00:00"), (4, ISBN, "chapters", 17, "2026-04-01 10:00:00"),
+             (5, "1111111111", "pages", 9999, "2026-01-01 10:00:00")],
+        )
+        await conn.commit()
+
+    db = Database(path)
+    await db.setup()
+    async with db._conn.execute("SELECT user_id, completed_at FROM reading_progress ORDER BY user_id") as cursor:
+        found = [tuple(row) for row in await cursor.fetchall()]
+    assert found == [(1, "2026-05-09 10:00:00"), (2, None), (3, "2026-05-28 10:00:00"), (4, None), (5, None)]
+    await db.close()
+
+
+async def test_failed_migration_closes_the_connection(tmp_path, monkeypatch):
+    async def broken(conn):
+        raise RuntimeError("kaputt")
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", migrations.MIGRATIONS + [(99, "kaputt", broken)])
+    db = Database(str(tmp_path / "broken.db"))
+    with pytest.raises(RuntimeError):
+        await db.setup()
+    # Ohne das bliebe der Thread der Verbindung stehen und der Prozess endete nie.
+    assert db._conn is None

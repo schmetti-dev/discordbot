@@ -25,7 +25,13 @@ class Database:
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA foreign_keys = ON")
-        await migrate(self._conn)
+        try:
+            await migrate(self._conn)
+        except Exception:
+            # Eine offene Verbindung hält einen Thread am Leben: der Prozess würde
+            # hängen statt abzustürzen, und kein Neustart des Containers griffe.
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Verbindung sauber schließen."""
@@ -75,19 +81,29 @@ class Database:
                                mode: str, current: int,
                                total_override: int | None = None,
                                supplement_mode: str | None = None,
-                               supplement_value: int | None = None) -> None:
-        """Lesefortschritt eines Users für ein bestimmtes Buch setzen oder aktualisieren."""
+                               supplement_value: int | None = None,
+                               completed: bool = False) -> None:
+        """
+        Lesefortschritt eines Users für ein bestimmtes Buch setzen oder aktualisieren.
+
+        `completed` hält fest, dass das Buch damit zu Ende gelesen ist. Das Datum
+        des ersten Abschlusses bleibt stehen; wer seinen Stand wieder nach unten
+        korrigiert, gilt nicht mehr als fertig.
+        """
         await self._conn.execute("""
             INSERT INTO reading_progress
-                (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value,
+                 updated_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), CASE WHEN ? THEN datetime('now') END)
             ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET
                 mode=excluded.mode, current=excluded.current,
                 total_override=COALESCE(excluded.total_override, total_override),
                 supplement_mode=excluded.supplement_mode,
                 supplement_value=excluded.supplement_value,
-                updated_at=excluded.updated_at
-        """, (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value))
+                updated_at=excluded.updated_at,
+                completed_at=CASE WHEN excluded.completed_at IS NULL THEN NULL
+                                  ELSE COALESCE(completed_at, excluded.completed_at) END
+        """, (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value, completed))
         await self._conn.commit()
 
     async def get_progress(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
@@ -136,23 +152,23 @@ class Database:
             stats_row = await cursor.fetchone()
         fortschritt_count = stats_row["fortschritt_count"] if stats_row else 0
 
-        # books completed = distinct isbns mit Fortschritt, außer aktuellem Buch
+        # Abgeschlossen ist ein Buch, das zu Ende gelesen wurde, auch das aktuelle.
         async with self._conn.execute("""
             SELECT COUNT(DISTINCT isbn) as cnt FROM reading_progress
-            WHERE user_id = ? AND guild_id = ? AND isbn != ? AND isbn != ''
-        """, (user_id, guild_id, current_isbn or "")) as cursor:
+            WHERE user_id = ? AND guild_id = ? AND completed_at IS NOT NULL AND isbn != ''
+        """, (user_id, guild_id)) as cursor:
             cnt_row = await cursor.fetchone()
         books_completed = cnt_row["cnt"] if cnt_row else 0
 
-        # letztes Buch (nicht das aktuelle)
+        # zuletzt abgeschlossenes Buch
         async with self._conn.execute("""
-            SELECT isbn, updated_at FROM reading_progress
-            WHERE user_id = ? AND guild_id = ? AND isbn != ? AND isbn != ''
-            ORDER BY updated_at DESC LIMIT 1
-        """, (user_id, guild_id, current_isbn or "")) as cursor:
+            SELECT isbn, completed_at FROM reading_progress
+            WHERE user_id = ? AND guild_id = ? AND completed_at IS NOT NULL AND isbn != ''
+            ORDER BY completed_at DESC LIMIT 1
+        """, (user_id, guild_id)) as cursor:
             last_row = await cursor.fetchone()
         last_isbn = last_row["isbn"] if last_row else None
-        last_updated_at = last_row["updated_at"] if last_row else None
+        last_updated_at = last_row["completed_at"] if last_row else None
 
         # aktueller Fortschritt
         current_progress = None
