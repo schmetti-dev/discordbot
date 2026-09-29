@@ -11,6 +11,7 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 - 🎯 **Leseziele** — ein Datum fürs ganze Buch oder bis zu einer Seite / einem Kapitel, mit dem nötigen Tempo pro Tag
 - 🔔 **Erinnerungen** — privat, selten, und nur für Mitglieder, die sie selbst einschalten
 - 💾 **Tägliche Sicherung** der Datenbank
+- 🏆 **Achievements und Ränge** mit Musketier-Humor, privat: jede·r sieht nur die eigenen
 
 ## Commands
 
@@ -27,6 +28,7 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 | `/leseziel loeschen` | Ziel entfernen | Alle |
 | `/erinnerung an [alle_tage]` | Private Erinnerung einschalten | Alle |
 | `/erinnerung aus` | Erinnerung ausschalten | Alle |
+| `/achievements` | Eigene Achievements, Rang und nächste Stufen | Alle |
 
 ### Leseziele und Erinnerungen
 
@@ -66,6 +68,24 @@ cp .env.example .env
 # Bot starten
 python bot.py
 ```
+
+### Achievements und Ränge
+
+Achievements sind privat. Jedes Mitglied sieht nur die eigenen: nach dem eigenen `/fortschritt` und mit `/achievements`, beides nur für sich sichtbar. Der Bot postet sie nirgends.
+
+| Achievement | Wofür | Stufen (Holz / Bronze / Silber / Gold) |
+|---|---|---|
+| Bis zur letzten Seite | ausgelesene Bücher (Holz: das hölzerne Buch) | 1 / 3 / 10 / 25 |
+| Fleißiges Buchketier | `/fortschritt`-Einträge | 10 / 50 / 150 / 500 |
+| Streber | Leseziele vor dem Datum erreicht | 1 / 3 / 10 / 25 |
+| Plaudertasche | Beiträge in Threads von Clubbüchern | 25 / 100 / 250 / 500 |
+| Seitenfresser | gelesene Seiten (Leseraupe bis Großmeister der Seiten) | 500 / 2.000 / 10.000 / 25.000 |
+
+Einmalige: Frisch aus der Gascogne, Schnellster Degen, Einer für alle, Nächtlicher Ausritt, Gewaltritt. Dazu zwei geheime, die bis zur Freischaltung als ??? erscheinen.
+
+Der Rang folgt d'Artagnans Laufbahn nach ausgelesenen Büchern: Gascogner, Gardist bei des Essarts (1), Buchketier (3), Leutnant der Buchketiere (7), Kapitän der Buchketiere (12), Marschall von Frankreich (20).
+
+Abzeichen: Icons von [game-icons.net](https://game-icons.net), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Neu zeichnen und neue Achievements: `tools/badges/NOTICE.md`.
 
 ### Betrieb auf einem NAS oder Docker-Host
 
@@ -113,13 +133,15 @@ discordbot/
 │   ├── books.py        # /buch, /buch-setzen, /set-total-chapters
 │   ├── progress.py     # /fortschritt, /buchketiere
 │   ├── profiles.py     # /buchketier
-│   └── goals.py        # /leseziel, /erinnerung
+│   ├── goals.py        # /leseziel, /erinnerung
+│   └── achievements.py # /achievements, Freischaltungen, Beiträge in Buch-Threads
 ├── services/
 │   ├── openlibrary.py  # OpenLibrary API Client
 │   ├── dnb.py          # Deutsche Nationalbibliothek (SRU, MARC21)
 │   ├── bookinfo.py     # Erst OpenLibrary, dann DNB
 │   ├── goals.py        # Tempo und Fälligkeit, reine Logik
-│   └── backup.py       # Tägliche Sicherung
+│   ├── backup.py       # Tägliche Sicherung
+│   └── achievements.py # Katalog, Ränge, Regeln (reine Logik)
 ├── tests/
 │   ├── test_database.py    # Datenbank-Tests (in-memory SQLite)
 │   ├── test_openlibrary.py # API-Tests (httpx Mock)

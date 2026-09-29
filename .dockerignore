@@ -12,3 +12,4 @@ tests/
 deploy/nas/.env
 deploy/nas/data/
 backup/
+tools/

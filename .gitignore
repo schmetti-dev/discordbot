@@ -43,3 +43,4 @@ ehthumbs.db
 deploy/nas/.env
 deploy/nas/data/
 backup/
+tools/badges/node_modules/

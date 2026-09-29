@@ -33,6 +33,7 @@ def test_every_cog_is_loaded_by_the_bot():
 def test_level_text_names_the_next_rank():
     from cogs.profiles import _get_level, _get_next_level
 
-    assert _get_level(0)[0] == "Bücherwurm"
-    assert _get_next_level(0) == ("Leseraupe", 3)
-    assert _get_next_level(50) is None
+    assert _get_level(0)[0] == "Gascogner"
+    assert _get_level(3)[0] == "Buchketier"
+    assert _get_next_level(0) == ("Gardist bei des Essarts", 1)
+    assert _get_next_level(20) is None

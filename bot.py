@@ -54,6 +54,7 @@ class BuchclubBot(commands.Bot):
         await self.load_extension("cogs.progress")
         await self.load_extension("cogs.profiles")
         await self.load_extension("cogs.goals")
+        await self.load_extension("cogs.achievements")
         log.info("Cogs geladen.")
 
         if backup_dir():

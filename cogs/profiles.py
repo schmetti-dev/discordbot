@@ -15,36 +15,18 @@ from discord.ext import commands
 
 from services.bookinfo import fetch_book
 from cogs.progress import _format_progress
+from services.achievements import next_rank, rank_for
 
 log = logging.getLogger("buchclub.profiles")
 
-# Level-System: (min_bücher, titel, embed_farbe)
-LEVEL_TIERS = [
-    (0,  "Bücherwurm",             0x8B4513),
-    (3,  "Leseraupe",              0x6A8759),
-    (7,  "Seitenflüsterer",        0x4A90D9),
-    (12, "Büchernarr",             0xD4A017),
-    (20, "Lesemeister",            0xC0392B),
-    (30, "Bibliophiler",           0x8E44AD),
-    (50, "Großmeister der Seiten", 0x2C3E50),
-]
-
-
 def _get_level(books_completed: int) -> tuple[str, int]:
-    """Gibt (titel, farbe) für die Anzahl abgeschlossener Bücher zurück."""
-    title, color = LEVEL_TIERS[0][1], LEVEL_TIERS[0][2]
-    for threshold, t, c in LEVEL_TIERS:
-        if books_completed >= threshold:
-            title, color = t, c
-    return title, color
+    """Gibt (Rang, Farbe) für die Anzahl abgeschlossener Bücher zurück. Ränge: d'Artagnans Laufbahn."""
+    return rank_for(books_completed)
 
 
 def _get_next_level(books_completed: int) -> tuple[str, int] | None:
-    """Gibt (nächster_titel, bücher_noch_nötig) zurück, oder None wenn max Level."""
-    for threshold, title, _ in LEVEL_TIERS:
-        if books_completed < threshold:
-            return title, threshold - books_completed
-    return None
+    """Gibt (nächster Rang, noch nötige Bücher) zurück, oder None beim höchsten Rang."""
+    return next_rank(books_completed)
 
 
 class Profiles(commands.Cog):

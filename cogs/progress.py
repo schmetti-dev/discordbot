@@ -15,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.goals import is_complete
+from cogs.achievements import after_progress
 
 log = logging.getLogger("buchclub.progress")
 
@@ -196,6 +197,7 @@ class Progress(commands.Cog):
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
         await interaction.followup.send(embed=embed)
+        await after_progress(self.bot, interaction, previous, book_isbn, known, completed)
 
     @app_commands.command(
         name="buchketiere",

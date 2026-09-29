@@ -144,10 +144,57 @@ async def _completed_at(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def _achievements(conn: aiosqlite.Connection) -> None:
+    """Bücherliste mit Thread, Achievements, erreichte Ziele und Beiträge in Buch-Threads."""
+    await conn.executescript("""
+        -- Jedes Clubbuch, auch vergangene: Seiten für Seitenfresser, Thread für Plaudertasche.
+        CREATE TABLE books (
+            isbn           TEXT PRIMARY KEY,
+            title          TEXT NOT NULL,
+            total_pages    INTEGER,
+            total_chapters INTEGER,
+            set_at         TEXT,
+            thread_id      INTEGER
+        );
+        INSERT INTO books (isbn, title, total_pages, total_chapters, set_at)
+            SELECT isbn, title, total_pages, total_chapters, set_at FROM current_book;
+
+        -- Freigeschaltete Achievements, je Stufe eine Zeile. seen = dem Mitglied schon gezeigt.
+        CREATE TABLE achievements (
+            user_id     INTEGER NOT NULL,
+            guild_id    INTEGER NOT NULL,
+            key         TEXT    NOT NULL,
+            tier        INTEGER NOT NULL DEFAULT 0,
+            unlocked_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            seen        INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, guild_id, key, tier)
+        );
+
+        -- Jedes erreichte Leseziel bleibt gezählt, auch wenn später ein neues gesetzt wird.
+        CREATE TABLE goals_reached (
+            user_id    INTEGER NOT NULL,
+            guild_id   INTEGER NOT NULL,
+            isbn       TEXT    NOT NULL,
+            target     INTEGER NOT NULL,
+            deadline   TEXT    NOT NULL,
+            reached_at TEXT    NOT NULL,
+            PRIMARY KEY (user_id, guild_id, isbn, target, deadline)
+        );
+
+        CREATE TABLE thread_messages (
+            user_id  INTEGER NOT NULL,
+            guild_id INTEGER NOT NULL,
+            count    INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, guild_id)
+        );
+    """)
+
+
 MIGRATIONS = [
     (1, "Grundschema bis v1.1.0", _baseline),
     (2, "Leseziele und Erinnerungen", _goals_and_reminders),
     (3, "Abschlussdatum am Lesefortschritt", _completed_at),
+    (4, "Achievements", _achievements),
 ]
 
 

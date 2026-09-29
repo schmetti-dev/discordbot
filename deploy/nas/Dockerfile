@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot.py database.py migrations.py ./
 COPY cogs ./cogs
 COPY services ./services
+COPY assets ./assets
 
 # Der Bot läuft nicht als root. Die Volumes müssen dieser Kennung gehören.
 RUN useradd --uid 1000 --create-home buchclub && mkdir -p /data /backup && chown buchclub /data /backup
