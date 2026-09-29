@@ -82,7 +82,7 @@ class Profiles(commands.Cog):
         if next_level:
             next_title, books_needed = next_level
             buch_pl = "Buch" if books_needed == 1 else "Bücher"
-            level_text += f"\n_{books_needed} {buch_pl} bis „{next_title}"_"
+            level_text += f"\n_{books_needed} {buch_pl} bis „{next_title}“_"
         embed.add_field(name="Rang", value=level_text, inline=True)
 
         # Bücher abgeschlossen
