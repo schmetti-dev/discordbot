@@ -13,7 +13,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from services.openlibrary import fetch_book_by_isbn
+from services.bookinfo import fetch_book
 from cogs.progress import _format_progress
 
 log = logging.getLogger("buchclub.profiles")
@@ -99,7 +99,7 @@ class Profiles(commands.Cog):
         if profile["last_isbn"]:
             last_title = profile["last_isbn"]  # Fallback: ISBN
             try:
-                book_data = await fetch_book_by_isbn(profile["last_isbn"])
+                book_data = await fetch_book(profile["last_isbn"])
                 if book_data:
                     last_title = book_data["title"]
                     if book_data.get("author"):

@@ -4,7 +4,7 @@ Ein Discord-Bot für unseren Buchclub — gebaut mit [discord.py](https://discor
 
 ## Features
 
-- 📖 **Aktuelles Buch** verwalten via ISBN (OpenLibrary API)
+- 📖 **Aktuelles Buch** verwalten via ISBN (OpenLibrary, sonst Deutsche Nationalbibliothek: die kennt auch deutsche E-Books)
 - 📝 **Klappentext & Cover** auf Knopfdruck anzeigen
 - 📊 **Lesefortschritt** pro User tracken (Seiten oder Kapitel)
 - 👥 **Übersicht** — wer ist wie weit?
@@ -116,6 +116,8 @@ discordbot/
 │   └── goals.py        # /leseziel, /erinnerung
 ├── services/
 │   ├── openlibrary.py  # OpenLibrary API Client
+│   ├── dnb.py          # Deutsche Nationalbibliothek (SRU, MARC21)
+│   ├── bookinfo.py     # Erst OpenLibrary, dann DNB
 │   ├── goals.py        # Tempo und Fälligkeit, reine Logik
 │   └── backup.py       # Tägliche Sicherung
 ├── tests/
