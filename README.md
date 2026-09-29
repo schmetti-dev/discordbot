@@ -77,6 +77,8 @@ docker compose up -d --build
 
 Die Datenbank liegt in `DATA_DIR`, die tägliche Sicherung in `BACKUP_HOST_DIR`. Beide Verzeichnisse müssen der Kennung 1000 gehören, unter der der Bot im Container läuft. Leg die Sicherung auf eine andere Platte als die Datenbank.
 
+Schreibt der Bot beim Start `Sicherung fehlgeschlagen` ins Log, darf er nicht in das Sicherungsverzeichnis schreiben. Manche NAS-Freigaben erlauben das nur einer Gruppe: trag deren Nummer als `EXTRA_GID` in `.env` ein.
+
 ### Sicherung und Wiederherstellung
 
 Ist `BACKUP_DIR` gesetzt, schreibt der Bot beim Start und danach alle 24 Stunden eine vollständige Kopie der Datenbank (`buchclub-<Zeitpunkt>.db`), prüft sie mit SQLites Integritätsprüfung und behält die letzten `BACKUP_KEEP` Kopien. Ohne `BACKUP_DIR` gibt es keine Sicherung, und der Bot sagt das beim Start im Log.

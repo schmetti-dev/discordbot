@@ -13,6 +13,9 @@ services:
     container_name: buchketiere
     restart: unless-stopped
     env_file: .env
+    # Manche NAS-Freigaben lassen nur eine bestimmte Gruppe schreiben.
+    group_add:
+      - "${EXTRA_GID:-1000}"
     volumes:
       - ${DATA_DIR:-./data}:/data
       - ${BACKUP_HOST_DIR:?Bitte BACKUP_HOST_DIR in .env setzen}:/backup
