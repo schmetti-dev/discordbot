@@ -12,6 +12,9 @@ Das ermöglicht sauberes Testen mit :memory: Datenbanken.
 
 import aiosqlite
 
+from migrations import migrate
+from services.goals import progress_in_unit
+
 
 class Database:
     def __init__(self, path: str):
@@ -19,89 +22,17 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def setup(self) -> None:
-        """Verbindung öffnen und Schema erstellen falls nicht vorhanden."""
+        """Verbindung öffnen und Schema auf den aktuellen Stand bringen."""
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
-        await self._conn.executescript("""
-            -- Aktuelles Buch (immer max. 1 Eintrag)
-            CREATE TABLE IF NOT EXISTS current_book (
-                id          INTEGER PRIMARY KEY CHECK (id = 1),
-                isbn        TEXT NOT NULL,
-                title       TEXT NOT NULL,
-                author      TEXT,
-                description TEXT,
-                cover_url   TEXT,
-                total_pages INTEGER,       -- Aus API, anpassbar
-                total_chapters INTEGER,    -- Optional, manuell gesetzt
-                set_by      INTEGER,       -- Discord User ID des Admins
-                set_at      TEXT DEFAULT (datetime('now'))
-            );
-
-            -- Lesefortschritt pro User + Buch (isbn als Teil des PK für History)
-            CREATE TABLE IF NOT EXISTS reading_progress (
-                user_id          INTEGER NOT NULL,
-                guild_id         INTEGER NOT NULL,
-                isbn             TEXT    NOT NULL DEFAULT '',
-                mode             TEXT    NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
-                current          INTEGER NOT NULL DEFAULT 0,
-                total_override   INTEGER,
-                supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
-                supplement_value INTEGER,
-                updated_at       TEXT DEFAULT (datetime('now')),
-                PRIMARY KEY (user_id, guild_id, isbn)
-            );
-
-            -- User-Statistiken (Aktivitätszähler)
-            CREATE TABLE IF NOT EXISTS user_stats (
-                user_id           INTEGER NOT NULL,
-                guild_id          INTEGER NOT NULL,
-                fortschritt_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, guild_id)
-            );
-        """)
-        await self._conn.commit()
-
-        # Migration: add 'percent' mode + supplement columns to existing databases
-        async with self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reading_progress'"
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row and ("'percent'" not in row[0] or "supplement_mode" not in row[0]):
-                await self._conn.executescript("""
-                    CREATE TABLE reading_progress_new (
-                        user_id          INTEGER NOT NULL,
-                        guild_id         INTEGER NOT NULL,
-                        isbn             TEXT    NOT NULL DEFAULT '',
-                        mode             TEXT NOT NULL CHECK (mode IN ('pages', 'chapters', 'percent')),
-                        current          INTEGER NOT NULL DEFAULT 0,
-                        total_override   INTEGER,
-                        supplement_mode  TEXT CHECK (supplement_mode IN ('pages', 'percent') OR supplement_mode IS NULL),
-                        supplement_value INTEGER,
-                        updated_at       TEXT DEFAULT (datetime('now')),
-                        PRIMARY KEY (user_id, guild_id, isbn)
-                    );
-                    INSERT INTO reading_progress_new (user_id, guild_id, mode, current, total_override, updated_at)
-                        SELECT user_id, guild_id, mode, current, total_override, updated_at FROM reading_progress;
-                    DROP TABLE reading_progress;
-                    ALTER TABLE reading_progress_new RENAME TO reading_progress;
-                """)
-                await self._conn.commit()
-
-        # Migration: add isbn column if missing (existing DBs without it)
-        async with self._conn.execute(
-            "PRAGMA table_info(reading_progress)"
-        ) as cursor:
-            cols = [row[1] for row in await cursor.fetchall()]
-        if "isbn" not in cols:
-            await self._conn.execute(
-                "ALTER TABLE reading_progress ADD COLUMN isbn TEXT NOT NULL DEFAULT ''"
-            )
-            await self._conn.execute("""
-                UPDATE reading_progress
-                SET isbn = COALESCE((SELECT isbn FROM current_book WHERE id = 1), '')
-                WHERE isbn = ''
-            """)
-            await self._conn.commit()
+        await self._conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            await migrate(self._conn)
+        except Exception:
+            # Eine offene Verbindung hält einen Thread am Leben: der Prozess würde
+            # hängen statt abzustürzen, und kein Neustart des Containers griffe.
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Verbindung sauber schließen."""
@@ -124,6 +55,11 @@ class Database:
                 total_pages=excluded.total_pages, set_by=excluded.set_by,
                 set_at=excluded.set_at, total_chapters=NULL
         """, (isbn, title, author, description, cover_url, total_pages, set_by))
+        # Die Bücherliste merkt sich jedes Clubbuch, der Thread bleibt beim Überschreiben stehen.
+        await self._conn.execute("""
+            INSERT INTO books (isbn, title, total_pages, set_at) VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(isbn) DO UPDATE SET title=excluded.title, total_pages=excluded.total_pages
+        """, (isbn, title, total_pages))
         await self._conn.commit()
 
     async def get_book(self) -> dict | None:
@@ -142,6 +78,9 @@ class Database:
         cursor = await self._conn.execute(
             "UPDATE current_book SET total_chapters = ? WHERE id = 1", (total,)
         )
+        await self._conn.execute(
+            "UPDATE books SET total_chapters = ? WHERE isbn = (SELECT isbn FROM current_book WHERE id = 1)", (total,)
+        )
         await self._conn.commit()
         return cursor.rowcount > 0
 
@@ -151,19 +90,29 @@ class Database:
                                mode: str, current: int,
                                total_override: int | None = None,
                                supplement_mode: str | None = None,
-                               supplement_value: int | None = None) -> None:
-        """Lesefortschritt eines Users für ein bestimmtes Buch setzen oder aktualisieren."""
+                               supplement_value: int | None = None,
+                               completed: bool = False) -> None:
+        """
+        Lesefortschritt eines Users für ein bestimmtes Buch setzen oder aktualisieren.
+
+        `completed` hält fest, dass das Buch damit zu Ende gelesen ist. Das Datum
+        des ersten Abschlusses bleibt stehen; wer seinen Stand wieder nach unten
+        korrigiert, gilt nicht mehr als fertig.
+        """
         await self._conn.execute("""
             INSERT INTO reading_progress
-                (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value,
+                 updated_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), CASE WHEN ? THEN datetime('now') END)
             ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET
                 mode=excluded.mode, current=excluded.current,
                 total_override=COALESCE(excluded.total_override, total_override),
                 supplement_mode=excluded.supplement_mode,
                 supplement_value=excluded.supplement_value,
-                updated_at=excluded.updated_at
-        """, (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value))
+                updated_at=excluded.updated_at,
+                completed_at=CASE WHEN excluded.completed_at IS NULL THEN NULL
+                                  ELSE COALESCE(completed_at, excluded.completed_at) END
+        """, (user_id, guild_id, isbn, mode, current, total_override, supplement_mode, supplement_value, completed))
         await self._conn.commit()
 
     async def get_progress(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
@@ -212,23 +161,23 @@ class Database:
             stats_row = await cursor.fetchone()
         fortschritt_count = stats_row["fortschritt_count"] if stats_row else 0
 
-        # books completed = distinct isbns mit Fortschritt, außer aktuellem Buch
+        # Abgeschlossen ist ein Buch, das zu Ende gelesen wurde, auch das aktuelle.
         async with self._conn.execute("""
             SELECT COUNT(DISTINCT isbn) as cnt FROM reading_progress
-            WHERE user_id = ? AND guild_id = ? AND isbn != ? AND isbn != ''
-        """, (user_id, guild_id, current_isbn or "")) as cursor:
+            WHERE user_id = ? AND guild_id = ? AND completed_at IS NOT NULL AND isbn != ''
+        """, (user_id, guild_id)) as cursor:
             cnt_row = await cursor.fetchone()
         books_completed = cnt_row["cnt"] if cnt_row else 0
 
-        # letztes Buch (nicht das aktuelle)
+        # zuletzt abgeschlossenes Buch
         async with self._conn.execute("""
-            SELECT isbn, updated_at FROM reading_progress
-            WHERE user_id = ? AND guild_id = ? AND isbn != ? AND isbn != ''
-            ORDER BY updated_at DESC LIMIT 1
-        """, (user_id, guild_id, current_isbn or "")) as cursor:
+            SELECT isbn, completed_at FROM reading_progress
+            WHERE user_id = ? AND guild_id = ? AND completed_at IS NOT NULL AND isbn != ''
+            ORDER BY completed_at DESC LIMIT 1
+        """, (user_id, guild_id)) as cursor:
             last_row = await cursor.fetchone()
         last_isbn = last_row["isbn"] if last_row else None
-        last_updated_at = last_row["updated_at"] if last_row else None
+        last_updated_at = last_row["completed_at"] if last_row else None
 
         # aktueller Fortschritt
         current_progress = None
@@ -243,3 +192,237 @@ class Database:
             "progress": current_progress,
             "current_book": book,
         }
+
+    # ── Leseziele ─────────────────────────────────────────────────────────────
+
+    async def set_goal(self, user_id: int, guild_id: int, isbn: str, unit: str,
+                       target: int, deadline: str, start_value: int, start_date: str) -> None:
+        """Leseziel setzen oder ersetzen. Eine eingeschaltete Erinnerung bleibt bestehen."""
+        await self._conn.execute("""
+            INSERT INTO reading_goals (user_id, guild_id, isbn, unit, target, deadline, start_value, start_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET
+                unit=excluded.unit, target=excluded.target, deadline=excluded.deadline,
+                start_value=excluded.start_value, start_date=excluded.start_date,
+                created_at=datetime('now')
+        """, (user_id, guild_id, isbn, unit, target, deadline, start_value, start_date))
+        await self._conn.commit()
+
+    async def get_goal(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
+        async with self._conn.execute("""
+            SELECT * FROM reading_goals WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def delete_goal(self, user_id: int, guild_id: int, isbn: str) -> bool:
+        """Leseziel löschen. Die Erinnerung dazu verschwindet mit."""
+        cursor = await self._conn.execute("""
+            DELETE FROM reading_goals WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    # ── Erinnerungen ──────────────────────────────────────────────────────────
+
+    async def enable_reminder(self, user_id: int, guild_id: int, isbn: str, interval_days: int) -> None:
+        """Erinnerung einschalten. Nur der Befehl des Mitglieds ruft das auf."""
+        await self._conn.execute("""
+            INSERT INTO reading_reminders (user_id, guild_id, isbn, interval_days)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, guild_id, isbn) DO UPDATE SET interval_days=excluded.interval_days
+        """, (user_id, guild_id, isbn, interval_days))
+        await self._conn.commit()
+
+    async def disable_reminder(self, user_id: int, guild_id: int, isbn: str) -> bool:
+        cursor = await self._conn.execute("""
+            DELETE FROM reading_reminders WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_reminder(self, user_id: int, guild_id: int, isbn: str) -> dict | None:
+        async with self._conn.execute("""
+            SELECT * FROM reading_reminders WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (user_id, guild_id, isbn)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_reminders(self, isbn: str) -> list[dict]:
+        """Alle eingeschalteten Erinnerungen für ein Buch."""
+        async with self._conn.execute(
+            "SELECT * FROM reading_reminders WHERE isbn = ?", (isbn,)
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def mark_reminder_sent(self, user_id: int, guild_id: int, isbn: str, sent_at: str) -> None:
+        await self._conn.execute("""
+            UPDATE reading_reminders SET last_sent_at = ?
+            WHERE user_id = ? AND guild_id = ? AND isbn = ?
+        """, (sent_at, user_id, guild_id, isbn))
+        await self._conn.commit()
+
+    # ── Sicherung ─────────────────────────────────────────────────────────────
+
+    async def backup_to(self, target_path: str) -> None:
+        """Vollständige Kopie über SQLites eigene Sicherung, auch während geschrieben wird."""
+        async with aiosqlite.connect(target_path) as target:
+            await self._conn.backup(target)
+
+    # ── Bücherliste ───────────────────────────────────────────────────────────
+
+    async def get_book_record(self, isbn: str) -> dict | None:
+        async with self._conn.execute("SELECT * FROM books WHERE isbn = ?", (isbn,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def set_book_thread(self, isbn: str, thread_id: int) -> bool:
+        cursor = await self._conn.execute("UPDATE books SET thread_id = ? WHERE isbn = ?", (thread_id, isbn))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def book_thread_ids(self) -> set[int]:
+        async with self._conn.execute("SELECT thread_id FROM books WHERE thread_id IS NOT NULL") as cursor:
+            return {row[0] for row in await cursor.fetchall()}
+
+    async def book_readers(self, guild_id: int, isbn: str) -> list[int]:
+        async with self._conn.execute(
+            "SELECT user_id FROM reading_progress WHERE guild_id = ? AND isbn = ?", (guild_id, isbn)
+        ) as cursor:
+            return [row[0] for row in await cursor.fetchall()]
+
+    # ── Kennzahlen für Achievements ───────────────────────────────────────────
+
+    async def add_thread_message(self, user_id: int, guild_id: int, count: int = 1) -> None:
+        await self._conn.execute("""
+            INSERT INTO thread_messages (user_id, guild_id, count) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, guild_id) DO UPDATE SET count = count + excluded.count
+        """, (user_id, guild_id, count))
+        await self._conn.commit()
+
+    async def record_goal_reached(self, user_id: int, guild_id: int, isbn: str, target: int,
+                                  deadline: str, reached_at: str) -> bool:
+        """Ein erreichtes Ziel einmal festhalten. True, wenn es neu ist."""
+        cursor = await self._conn.execute("""
+            INSERT OR IGNORE INTO goals_reached (user_id, guild_id, isbn, target, deadline, reached_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, guild_id, isbn, target, deadline, reached_at))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def _scalar(self, sql: str, params: tuple) -> int:
+        async with self._conn.execute(sql, params) as cursor:
+            row = await cursor.fetchone()
+            return (row[0] or 0) if row else 0
+
+    async def achievement_stats(self, user_id: int, guild_id: int) -> dict:
+        """Alle Kennzahlen, an denen Achievements und Ränge hängen."""
+        who = (user_id, guild_id)
+        stats = {
+            "books_finished": await self._scalar("""
+                SELECT COUNT(DISTINCT isbn) FROM reading_progress
+                WHERE user_id = ? AND guild_id = ? AND completed_at IS NOT NULL AND isbn != ''
+            """, who),
+            "fortschritt_count": await self._scalar(
+                "SELECT fortschritt_count FROM user_stats WHERE user_id = ? AND guild_id = ?", who
+            ),
+            "goals_reached_early": await self._scalar("""
+                SELECT COUNT(*) FROM goals_reached
+                WHERE user_id = ? AND guild_id = ? AND date(reached_at) <= deadline
+            """, who),
+            "thread_messages": await self._scalar(
+                "SELECT count FROM thread_messages WHERE user_id = ? AND guild_id = ?", who
+            ),
+            # Als Erste·r fertig: das eigene Abschlussdatum ist das früheste bei diesem Clubbuch.
+            "first_finishes": await self._scalar("""
+                SELECT COUNT(*) FROM reading_progress p JOIN books b ON b.isbn = p.isbn
+                WHERE p.user_id = ? AND p.guild_id = ? AND p.completed_at IS NOT NULL
+                  AND p.completed_at = (SELECT MIN(q.completed_at) FROM reading_progress q
+                                        WHERE q.guild_id = p.guild_id AND q.isbn = p.isbn)
+            """, who),
+            # Alle, die ein Clubbuch angefangen haben (mindestens zwei), sind fertig.
+            "all_finished_books": await self._scalar("""
+                SELECT COUNT(*) FROM reading_progress p JOIN books b ON b.isbn = p.isbn
+                WHERE p.user_id = ? AND p.guild_id = ? AND p.completed_at IS NOT NULL
+                  AND (SELECT COUNT(*) FROM reading_progress q WHERE q.guild_id = p.guild_id AND q.isbn = p.isbn) >= 2
+                  AND NOT EXISTS (SELECT 1 FROM reading_progress q
+                                  WHERE q.guild_id = p.guild_id AND q.isbn = p.isbn AND q.completed_at IS NULL)
+            """, who),
+        }
+
+        pages = 0
+        async with self._conn.execute("""
+            SELECT p.*, b.total_pages AS book_pages, b.total_chapters AS book_chapters
+            FROM reading_progress p LEFT JOIN books b ON b.isbn = p.isbn
+            WHERE p.user_id = ? AND p.guild_id = ?
+        """, who) as cursor:
+            for row in map(dict, await cursor.fetchall()):
+                book = {"total_pages": row["book_pages"], "total_chapters": row["book_chapters"]}
+                total = row.get("total_override") or row["book_pages"]
+                if row.get("completed_at") and total:
+                    pages += total
+                else:
+                    pages += progress_in_unit(row, "pages", book) or 0
+        stats["pages_read"] = pages
+        return stats
+
+    # ── Achievements ──────────────────────────────────────────────────────────
+
+    async def get_achievements(self, user_id: int, guild_id: int) -> set[tuple[str, int]]:
+        async with self._conn.execute(
+            "SELECT key, tier FROM achievements WHERE user_id = ? AND guild_id = ?", (user_id, guild_id)
+        ) as cursor:
+            return {(row[0], row[1]) for row in await cursor.fetchall()}
+
+    async def store_achievements(self, user_id: int, guild_id: int, items: set[tuple[str, int]],
+                                 unlocked_at: str | None = None) -> list[tuple[str, int]]:
+        """Speichert, was noch fehlt, und gibt nur das Neue zurück (sortiert)."""
+        new = []
+        for key, tier in sorted(items):
+            cursor = await self._conn.execute("""
+                INSERT OR IGNORE INTO achievements (user_id, guild_id, key, tier, unlocked_at)
+                VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))
+            """, (user_id, guild_id, key, tier, unlocked_at))
+            if cursor.rowcount > 0:
+                new.append((key, tier))
+        await self._conn.commit()
+        return new
+
+    async def get_unshared(self, user_id: int, guild_id: int) -> list[tuple[str, int]]:
+        async with self._conn.execute("""
+            SELECT key, tier FROM achievements WHERE user_id = ? AND guild_id = ? AND shared_at IS NULL
+            ORDER BY unlocked_at DESC, key, tier
+        """, (user_id, guild_id)) as cursor:
+            return [(row[0], row[1]) for row in await cursor.fetchall()]
+
+    async def get_unseen(self, user_id: int, guild_id: int) -> list[tuple[str, int]]:
+        async with self._conn.execute("""
+            SELECT key, tier FROM achievements WHERE user_id = ? AND guild_id = ? AND seen = 0
+            ORDER BY unlocked_at, key, tier
+        """, (user_id, guild_id)) as cursor:
+            return [(row[0], row[1]) for row in await cursor.fetchall()]
+
+    async def mark_seen(self, user_id: int, guild_id: int) -> None:
+        await self._conn.execute(
+            "UPDATE achievements SET seen = 1 WHERE user_id = ? AND guild_id = ?", (user_id, guild_id)
+        )
+        await self._conn.commit()
+
+    async def claim_share(self, user_id: int, guild_id: int, key: str, tier: int) -> bool:
+        """
+        Merkt ein Achievement als geteilt. True nur beim ersten Mal und nur, wenn
+        es dem Mitglied gehört; so kann niemand fremde oder doppelt teilen.
+        """
+        cursor = await self._conn.execute("""
+            UPDATE achievements SET shared_at = datetime('now')
+            WHERE user_id = ? AND guild_id = ? AND key = ? AND tier = ? AND shared_at IS NULL
+        """, (user_id, guild_id, key, tier))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def release_share(self, user_id: int, guild_id: int, key: str, tier: int) -> None:
+        """Teilen zurücknehmen, wenn der Post nicht rausging."""
+        await self._conn.execute("""
+            UPDATE achievements SET shared_at = NULL WHERE user_id = ? AND guild_id = ? AND key = ? AND tier = ?
+        """, (user_id, guild_id, key, tier))
+        await self._conn.commit()

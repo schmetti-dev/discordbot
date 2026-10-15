@@ -16,7 +16,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from services.openlibrary import fetch_book_by_isbn
+from services.bookinfo import fetch_book
 
 log = logging.getLogger("buchclub.books")
 
@@ -65,7 +65,7 @@ class Books(commands.Cog):
         """Neues Buch via ISBN setzen (nur für Admins)."""
         await interaction.response.defer(thinking=True)
 
-        book_data = await fetch_book_by_isbn(isbn)
+        book_data = await fetch_book(isbn)
         if not book_data:
             await interaction.followup.send(
                 f"❌ Kein Buch mit ISBN **{isbn}** gefunden. "
@@ -147,6 +147,49 @@ def _build_book_embed(book: dict) -> discord.Embed:
     if book.get("cover_url"):
         embed.set_thumbnail(url=book["cover_url"])
 
+    return embed
+
+
+# Farben der bisherigen Buchkarten im Forum
+CARD_COLOR = 0x5BCEF5
+AUTHOR_CARD_COLOR = 0xFFBB5C
+
+
+def build_book_card(book: dict, pages: str | None = None, published: str | None = None) -> discord.Embed:
+    """
+    Buchkarte für den Forum-Beitrag eines neuen Buchs, im Stil der bisherigen
+    Beiträge: Klappentext, Genre, Seiten, Erscheinungsdatum, ISBN, Verlag, Cover.
+    `pages` und `published` überschreiben die Anzeige, z.B. "397 (Taschenbuch)".
+    Felder ohne Daten fehlen, statt mit einem Platzhalter zu erscheinen.
+    """
+    title = book["title"]
+    if book.get("subtitle"):
+        title += f"\n{book['subtitle']}"
+    embed = discord.Embed(title=title, url=book.get("record_url"), color=CARD_COLOR)
+    if book.get("author"):
+        embed.set_author(name=book["author"])
+    if book.get("description"):
+        desc = book["description"]
+        embed.description = desc if len(desc) <= 4000 else desc[:3997] + "..."
+
+    fields = [
+        ("Genre", book.get("genre"), True),
+        ("Seiten", pages or (str(book["total_pages"]) if book.get("total_pages") else None), True),
+        ("Erscheinungsdatum", published or book.get("year"), True),
+        ("ISBN", book.get("isbn_display") or book.get("isbn"), False),
+        ("Verlag", book.get("publisher"), True),
+    ]
+    for name, value, inline in fields:
+        if value:
+            embed.add_field(name=name, value=value, inline=inline)
+    if book.get("record_url"):
+        embed.set_footer(text="Daten: Deutsche Nationalbibliothek")
+    return embed
+
+
+def build_author_card(name: str, about: str) -> discord.Embed:
+    embed = discord.Embed(title=name, description=about, color=AUTHOR_CARD_COLOR)
+    embed.set_author(name="Autor")
     return embed
 
 

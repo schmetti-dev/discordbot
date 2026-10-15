@@ -7,3 +7,9 @@ __pycache__/
 *.db
 requirements-dev.txt
 .gitignore
+.venv/
+tests/
+deploy/nas/.env
+deploy/nas/data/
+backup/
+tools/
